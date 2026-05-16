@@ -100,3 +100,54 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
         .verify_password(password.as_bytes(), &parsed)
         .map_err(|_| AppError::Unauthorized("invalid credentials".into()))
 }
+
+pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthResponse> {
+    let octocrab = octocrab::OctocrabBuilder::new()
+        .personal_token(state.config.github_client_secret.clone())
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
+
+    let token = octocrab.auth()
+        .exchange_code(code)
+        .client_id(state.config.github_client_id.clone())
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("github code exchange failed: {e}")))?;
+
+    let octocrab = octocrab::OctocrabBuilder::new()
+        .personal_token(token.access_token.clone())
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
+
+    let user = octocrab.current().user().await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("github user fetch failed: {e}")))?;
+
+    let github_id = user.id.0 as i64;
+    let github_login = user.login.clone();
+    let name = user.name.clone().unwrap_or_else(|| github_login.clone());
+
+    let email = user.email.unwrap_or_else(|| {
+        format!("{}@users.noreply.github.com", github_login)
+    });
+
+    let user = sqlx::query_as::<_, crate::models::user::User>(
+        r#"
+        INSERT INTO users (email, name, github_id, github_login, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, NOW(), NOW())
+        ON CONFLICT (email)
+        DO UPDATE SET
+            github_id = EXCLUDED.github_id,
+            github_login = EXCLUDED.github_login,
+            updated_at = NOW()
+        RETURNING *
+        "#
+    )
+    .bind(&email)
+    .bind(&name)
+    .bind(github_id)
+    .bind(&github_login)
+    .fetch_one(&*state.db)
+    .await?;
+
+    let token = mint_jwt(&user.id, &state.config.jwt_secret)?;
+    Ok(AuthResponse { token, user })
+}
