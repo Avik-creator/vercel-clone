@@ -102,13 +102,14 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
 
 pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthResponse> {
     // Exchange code for access token via reqwest
+    let code_str = code.to_string();
     let token_resp = reqwest::Client::new()
         .post("https://github.com/login/oauth/access_token")
         .header("Accept", "application/json")
         .form(&[
             ("client_id", &state.config.github_client_id),
             ("client_secret", &state.config.github_client_secret),
-            ("code", &code.to_string()),
+            ("code", &code_str),
         ])
         .send()
         .await
