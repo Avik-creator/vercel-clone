@@ -108,7 +108,7 @@ pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthRespons
         .form(&[
             ("client_id", &state.config.github_client_id),
             ("client_secret", &state.config.github_client_secret),
-            ("code", code),
+            ("code", &code.to_string()),
         ])
         .send()
         .await

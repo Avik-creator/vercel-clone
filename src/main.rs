@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
-    http::Method,
+    http::{Method, StatusCode},
 };
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .merge(routes::router(state.clone()))
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(Duration::from_secs(30), StatusCode::GATEWAY_TIMEOUT))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(PropagateRequestIdLayer::x_request_id())
