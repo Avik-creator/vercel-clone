@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     errors::AppResult,
-    models::api_key::{ApiKey, CreateApiKeyRequest},
+    models::{ApiKey, CreateApiKeyRequest},
 };
 
 pub async fn list(state: &AppState, user_id: Uuid) -> AppResult<Vec<ApiKey>> {

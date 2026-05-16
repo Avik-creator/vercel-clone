@@ -8,7 +8,7 @@ use crate::{
     AppState,
     errors::{AppError, AppResult},
     middleware::auth::AuthUser,
-    models::project::{CreateProjectRequest, UpdateProjectRequest},
+    models::{CreateProjectRequest, UpdateProjectRequest},
     services::projects as project_service,
 };
 

@@ -10,7 +10,7 @@ use crate::{
     AppState,
     errors::{AppError, AppResult},
     middleware::auth::AuthUser,
-    models::deployment::{CreateDeploymentRequest, BuildCallbackRequest},
+    models::{CreateDeploymentRequest, BuildCallbackRequest},
     services::deployments as deploy_service,
 };
 

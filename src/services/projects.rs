@@ -2,7 +2,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     errors::{AppResult, NotFoundExt},
-    models::project::{CreateProjectRequest, Project, UpdateProjectRequest},
+    models::{CreateProjectRequest, Project, UpdateProjectRequest},
 };
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Project>> {

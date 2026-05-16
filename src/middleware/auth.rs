@@ -13,7 +13,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     errors::AppError,
-    models::user::User,
+    models::User,
 };
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

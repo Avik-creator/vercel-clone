@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     errors::{AppError, AppResult, NotFoundExt},
-    models::deployment::{BuildCallbackRequest, CreateDeploymentRequest, Deployment, DeploymentState},
+    models::{BuildCallbackRequest, CreateDeploymentRequest, Deployment, DeploymentState},
 };
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Deployment>> {

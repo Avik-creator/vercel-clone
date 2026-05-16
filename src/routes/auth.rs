@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::{
     AppState,
     errors::{AppError, AppResult},
-    models::user::{CreateUserRequest, LoginRequest, AuthResponse},
+    models::{CreateUserRequest, LoginRequest, AuthResponse},
     services::auth as auth_service,
 };
 

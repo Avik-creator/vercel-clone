@@ -5,7 +5,7 @@ use crate::{
     AppState,
     errors::AppResult,
     middleware::auth::AuthUser,
-    models::api_key::CreateApiKeyRequest,
+    models::CreateApiKeyRequest,
     services::api_keys as key_service,
 };
 
