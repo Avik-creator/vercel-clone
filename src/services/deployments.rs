@@ -53,12 +53,14 @@ pub async fn create(
     user_id: Uuid,
     req: CreateDeploymentRequest,
 ) -> AppResult<Deployment> {
+    let project_id = req.project_id.ok_or_else(|| AppError::BadRequest("missing project_id".into()))?;
+
     // Verify project ownership
     let project = sqlx::query(
         "SELECT id, build_command, output_dir, github_repo, github_installation_id
          FROM projects WHERE id = $1 AND owner_id = $2",
     )
-    .bind(req.project_id)
+    .bind(project_id)
     .bind(user_id)
     .fetch_one(&*state.db)
     .await
@@ -82,7 +84,7 @@ pub async fn create(
         RETURNING *
         "#
     )
-    .bind(req.project_id)
+    .bind(project_id)
     .bind(&req.commit_sha)
     .bind(&req.commit_message)
     .bind(&req.branch)

@@ -37,7 +37,7 @@ pub async fn create(
     Path(project_id): Path<Uuid>,
     Json(mut body): Json<CreateDeploymentRequest>,
 ) -> AppResult<Json<Value>> {
-    body.project_id = project_id;
+    body.project_id = Some(project_id);
     let deploy = deploy_service::create(&state, user.id, body).await?;
     Ok(Json(serde_json::to_value(deploy).unwrap()))
 }

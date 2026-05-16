@@ -35,7 +35,7 @@ pub struct Deployment {
 
 #[derive(Debug, Deserialize)]
 pub struct CreateDeploymentRequest {
-    pub project_id: Uuid,
+    pub project_id: Option<Uuid>,
     pub commit_sha: String,
     pub commit_message: Option<String>,
     pub branch: String,
