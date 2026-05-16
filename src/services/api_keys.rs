@@ -65,10 +65,11 @@ pub async fn create(
 }
 
 pub async fn revoke(state: &AppState, user_id: Uuid, id: Uuid) -> AppResult<()> {
-    sqlx::query!(
+    sqlx::query(
         "DELETE FROM api_keys WHERE id = $1 AND user_id = $2",
-        id, user_id
     )
+    .bind(id)
+    .bind(user_id)
     .execute(&*state.db)
     .await?;
     Ok(())

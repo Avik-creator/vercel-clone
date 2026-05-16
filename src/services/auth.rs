@@ -30,7 +30,6 @@ pub async fn register(state: &AppState, body: CreateUserRequest) -> AppResult<Au
     }
 
     let password_hash = hash_password(&body.password)?;
-    let id = Uuid::new_v4();
     let now = Utc::now();
 
     let user = sqlx::query_as::<_, User>(
@@ -107,9 +106,8 @@ pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthRespons
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
 
-    let token = octocrab.auth()
-        .exchange_code(code)
-        .client_id(state.config.github_client_id.clone())
+    let token = octocrab
+        .authenticate(code, &state.config.github_client_id, &state.config.github_client_secret)
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("github code exchange failed: {e}")))?;
 
@@ -129,7 +127,7 @@ pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthRespons
         format!("{}@users.noreply.github.com", github_login)
     });
 
-    let user = sqlx::query_as::<_, User>(
+    let user = sqlx::query_as::<_, crate::models::user::User>(
         r#"
         INSERT INTO users (email, name, github_id, github_login, created_at, updated_at)
         VALUES ($1, $2, $3, $4, NOW(), NOW())

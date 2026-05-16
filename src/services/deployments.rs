@@ -53,14 +53,18 @@ pub async fn create(
     req: CreateDeploymentRequest,
 ) -> AppResult<Deployment> {
     // Verify project ownership
-    let project = sqlx::query!(
+    let project = sqlx::query(
         "SELECT id, build_command, output_dir, github_repo, github_installation_id
          FROM projects WHERE id = $1 AND owner_id = $2",
-        req.project_id, user_id
     )
+    .bind(req.project_id)
+    .bind(user_id)
     .fetch_one(&*state.db)
     .await
     .or_not_found("project")?;
+
+    let _project_id: Uuid = project.try_get("id")?;
+    let github_repo: Option<String> = project.try_get("github_repo")?;
 
     // Generate random short hash for preview URL (like Vercel does)
     let preview_hash: String = (0..8)
@@ -90,7 +94,7 @@ pub async fn create(
     tracing::info!(
         deployment_id = %deployment.id,
         commit = %req.commit_sha,
-        repo = ?project.github_repo,
+        repo = ?github_repo,
         "dispatching build job"
     );
 
@@ -113,15 +117,16 @@ pub async fn get_for_user(state: &AppState, user_id: Uuid, id: Uuid) -> AppResul
 }
 
 pub async fn cancel(state: &AppState, user_id: Uuid, id: Uuid) -> AppResult<()> {
-    let rows = sqlx::query!(
+    let rows = sqlx::query(
         r#"
         UPDATE deployments SET state = 'cancelled', updated_at = NOW()
         WHERE id = $1
           AND state IN ('queued', 'building')
           AND project_id IN (SELECT id FROM projects WHERE owner_id = $2)
         "#,
-        id, user_id
     )
+    .bind(id)
+    .bind(user_id)
     .execute(&*state.db)
     .await?
     .rows_affected();
@@ -140,19 +145,19 @@ pub async fn promote_to_production(state: &AppState, user_id: Uuid, id: Uuid) ->
     }
 
     // Demote current production deployment for this project
-    sqlx::query!(
+    sqlx::query(
         "UPDATE deployments SET is_production = false, updated_at = NOW()
          WHERE project_id = $1 AND is_production = true",
-        deploy.project_id
     )
+    .bind(deploy.project_id)
     .execute(&*state.db)
     .await?;
 
     // Promote this one
-    sqlx::query!(
+    sqlx::query(
         "UPDATE deployments SET is_production = true, updated_at = NOW() WHERE id = $1",
-        id
     )
+    .bind(id)
     .execute(&*state.db)
     .await?;
 
@@ -162,10 +167,11 @@ pub async fn promote_to_production(state: &AppState, user_id: Uuid, id: Uuid) ->
 /// Called by build workers when build state changes
 pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) -> AppResult<()> {
     let log_update = if let Some(chunk) = &req.log_chunk {
-        Some(sqlx::query!(
+        Some(sqlx::query(
             "UPDATE deployments SET build_log = COALESCE(build_log, '') || $1 WHERE id = $2",
-            chunk, req.deployment_id
         )
+        .bind(chunk)
+        .bind(req.deployment_id)
         .execute(&*state.db)
         .await?)
     } else {
@@ -174,7 +180,7 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
 
     let _ = log_update;
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         UPDATE deployments SET
             state = $2,
@@ -183,9 +189,9 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
             updated_at = NOW()
         WHERE id = $1
         "#,
-        req.deployment_id,
-        req.state as DeploymentState,
     )
+    .bind(req.deployment_id)
+    .bind(req.state as DeploymentState)
     .execute(&*state.db)
     .await?;
 

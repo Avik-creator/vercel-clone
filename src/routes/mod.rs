@@ -1,4 +1,4 @@
-use axum::{Router, routing::{get, post, put, delete, patch}};
+use axum::{Router, routing::{get, post, delete}};
 use crate::AppState;
 
 pub mod auth;

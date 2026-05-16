@@ -75,7 +75,7 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
     // Look up by prefix (first 16 chars) for efficiency, then verify full hash
     let prefix = &token[..token.len().min(20)];
 
-    let row = sqlx::query!(
+    let row = sqlx::query(
         r#"
         SELECT ak.id as api_key_id, ak.key_hash, ak.expires_at, u.id as user_id,
                u.email, u.name, u.github_id, u.github_login,
@@ -84,8 +84,8 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
         JOIN users u ON ak.user_id = u.id
         WHERE ak.key_prefix = $1
         "#,
-        prefix
     )
+    .bind(prefix)
     .fetch_one(&*state.db)
     .await
     .map_err(|e| match e {
@@ -93,15 +93,27 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
         _ => AppError::Database(e.into()),
     })?;
 
+    let api_key_id: Uuid = row.try_get("api_key_id")?;
+    let key_hash: String = row.try_get("key_hash")?;
+    let expires_at: Option<chrono::DateTime<chrono::Utc>> = row.try_get("expires_at")?;
+    let user_id: Uuid = row.try_get("user_id")?;
+    let email: String = row.try_get("email")?;
+    let name: String = row.try_get("name")?;
+    let github_id: Option<i64> = row.try_get("github_id")?;
+    let github_login: Option<String> = row.try_get("github_login")?;
+    let password_hash: Option<String> = row.try_get("password_hash")?;
+    let created_at: chrono::DateTime<chrono::Utc> = row.try_get("created_at")?;
+    let updated_at: chrono::DateTime<chrono::Utc> = row.try_get("updated_at")?;
+
     // Check expiry
-    if let Some(exp) = row.expires_at {
+    if let Some(exp) = expires_at {
         if exp < chrono::Utc::now() {
             return Err(AppError::Unauthorized("api key expired".into()));
         }
     }
 
      // Verify full hash
-    let hash = PasswordHash::new(&row.key_hash)
+    let hash = PasswordHash::new(&key_hash)
         .map_err(|_| AppError::Unauthorized("invalid api key".into()))?;
     Argon2::default()
         .verify_password(token.as_bytes(), &hash)
@@ -109,25 +121,24 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
 
     // Update last_used_at async (fire and forget)
     let pool = state.db.pool.clone();
-    let api_key_id = row.api_key_id;
     tokio::spawn(async move {
-        let _ = sqlx::query!(
+        let _ = sqlx::query(
             "UPDATE api_keys SET last_used_at = NOW() WHERE id = $1",
-            api_key_id
         )
+        .bind(api_key_id)
         .execute(&pool)
         .await;
     });
 
     let user = User {
-        id: row.user_id,
-        email: row.email,
-        name: row.name,
-        password_hash: row.password_hash,
-        github_id: row.github_id,
-        github_login: row.github_login,
-        created_at: row.created_at,
-        updated_at: row.updated_at,
+        id: user_id,
+        email,
+        name,
+        password_hash,
+        github_id,
+        github_login,
+        created_at,
+        updated_at,
     };
 
     Ok(AuthUser(user))

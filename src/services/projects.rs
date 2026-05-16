@@ -93,10 +93,11 @@ pub async fn update(
 }
 
 pub async fn delete(state: &AppState, user_id: Uuid, project_id: Uuid) -> AppResult<()> {
-    let rows = sqlx::query!(
+    let rows = sqlx::query(
         "DELETE FROM projects WHERE id = $1 AND owner_id = $2",
-        project_id, user_id
     )
+    .bind(project_id)
+    .bind(user_id)
     .execute(&*state.db)
     .await?
     .rows_affected();

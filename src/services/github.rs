@@ -24,10 +24,10 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
     tracing::info!(repo = %repo_full_name, sha = %commit_sha, branch = %branch, "push event");
 
     // Find projects linked to this repo
-    let projects = sqlx::query!(
+    let projects = sqlx::query(
         "SELECT id FROM projects WHERE github_repo = $1",
-        repo_full_name
     )
+    .bind(repo_full_name)
     .fetch_all(&*state.db)
     .await?;
 
@@ -37,20 +37,21 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
             .collect();
         let preview_url = format!("{}-{}.{}", preview_hash, "preview", state.config.base_domain);
 
-        tracing::info!(project_id = %project.id, "triggering deployment");
+        let project_id: Uuid = project.try_get("id")?;
+        tracing::info!(project_id = %project_id, "triggering deployment");
 
-        sqlx::query!(
+        sqlx::query(
             r#"
             INSERT INTO deployments
                 (project_id, commit_sha, commit_message, branch, state, url, is_production)
             VALUES ($1, $2, $3, $4, 'queued', $5, false)
             "#,
-            project.id,
-            commit_sha,
-            commit_message,
-            branch,
-            preview_url,
         )
+        .bind(project_id)
+        .bind(commit_sha)
+        .bind(commit_message)
+        .bind(branch)
+        .bind(preview_url)
         .execute(&*state.db)
         .await?;
 
@@ -60,7 +61,7 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
     Ok(())
 }
 
-pub async fn handle_pull_request(state: &AppState, payload: Value) -> AppResult<()> {
+pub async fn handle_pull_request(_state: &AppState, payload: Value) -> AppResult<()> {
     let action = payload["action"].as_str().unwrap_or_default();
     let pr_number = payload["pull_request"]["number"].as_u64().unwrap_or_default();
     let repo = payload["repository"]["full_name"].as_str().unwrap_or_default();
