@@ -18,6 +18,8 @@ pub struct AppConfig {
     /// GitHub App credentials
     pub github_app_id: u64,
     pub github_app_private_key: String,
+    pub github_client_id: String,
+    pub github_client_secret: String,
     pub github_webhook_secret: String,
 
     /// Internal secret for build worker callbacks
