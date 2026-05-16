@@ -21,7 +21,7 @@ pub async fn register(state: &AppState, body: CreateUserRequest) -> AppResult<Au
     let exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)"
     )
-    .bind(&req.email)
+    .bind(&body.email)
     .fetch_one(&*state.db)
     .await?;
 
@@ -29,7 +29,7 @@ pub async fn register(state: &AppState, body: CreateUserRequest) -> AppResult<Au
         return Err(AppError::Conflict("email already registered".into()));
     }
 
-    let password_hash = hash_password(&req.password)?;
+    let password_hash = hash_password(&body.password)?;
     let id = Uuid::new_v4();
     let now = Utc::now();
 
@@ -40,8 +40,8 @@ pub async fn register(state: &AppState, body: CreateUserRequest) -> AppResult<Au
         RETURNING *
         "#
     )
-    .bind(&req.email)
-    .bind(&req.name)
+    .bind(&body.email)
+    .bind(&body.name)
     .bind(&password_hash)
     .bind(now)
     .fetch_one(&*state.db)
