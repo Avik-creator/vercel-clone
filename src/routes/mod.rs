@@ -20,19 +20,19 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/auth/github/callback", get(auth::github_oauth_callback))
 
         .route("/v1/projects",           get(projects::list).post(projects::create))
-        .route("/v1/projects/:id",       get(projects::get).patch(projects::update).delete(projects::delete))
-        .route("/v1/projects/:id/env",   get(projects::get_env).put(projects::set_env))
-        .route("/v1/projects/:id/link",  post(projects::link_github))
+        .route("/v1/projects/{id}",       get(projects::get).patch(projects::update).delete(projects::delete))
+        .route("/v1/projects/{id}/env",   get(projects::get_env).put(projects::set_env))
+        .route("/v1/projects/{id}/link",  post(projects::link_github))
 
         .route("/v1/deployments",                get(deployments::list))
-        .route("/v1/deployments/:id",            get(deployments::get))
-        .route("/v1/deployments/:id/cancel",     post(deployments::cancel))
-        .route("/v1/deployments/:id/promote",    post(deployments::promote))
-        .route("/v1/deployments/:id/logs",       get(deployments::stream_logs))
-        .route("/v1/projects/:id/deployments",   get(deployments::list_for_project).post(deployments::create))
+        .route("/v1/deployments/{id}",            get(deployments::get))
+        .route("/v1/deployments/{id}/cancel",     post(deployments::cancel))
+        .route("/v1/deployments/{id}/promote",    post(deployments::promote))
+        .route("/v1/deployments/{id}/logs",       get(deployments::stream_logs))
+        .route("/v1/projects/{id}/deployments",   get(deployments::list_for_project).post(deployments::create))
 
         .route("/v1/api-keys",      get(api_keys::list).post(api_keys::create))
-        .route("/v1/api-keys/:id",  delete(api_keys::revoke))
+        .route("/v1/api-keys/{id}",  delete(api_keys::revoke))
 
         .route("/webhooks/github", post(github::handle_webhook))
 
