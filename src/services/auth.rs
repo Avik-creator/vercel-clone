@@ -101,18 +101,28 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
 }
 
 pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthResponse> {
-    let octocrab = octocrab::OctocrabBuilder::new()
-        .personal_token(state.config.github_client_secret.clone())
-        .build()
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
-
-    let token = octocrab
-        .authenticate(code, &state.config.github_client_id, &state.config.github_client_secret)
+    // Exchange code for access token via reqwest
+    let token_resp = reqwest::Client::new()
+        .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
+        .form(&[
+            ("client_id", &state.config.github_client_id),
+            ("client_secret", &state.config.github_client_secret),
+            ("code", code),
+        ])
+        .send()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("github code exchange failed: {e}")))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("github token request failed: {e}")))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("github token parse failed: {e}")))?;
 
+    let access_token = token_resp["access_token"].as_str()
+        .ok_or_else(|| AppError::BadRequest(format!("github did not return access_token: {token_resp}")))?;
+
+    // Fetch user info via octocrab
     let octocrab = octocrab::OctocrabBuilder::new()
-        .personal_token(token.access_token.clone())
+        .personal_token(access_token.to_string())
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
 
@@ -127,7 +137,7 @@ pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthRespons
         format!("{}@users.noreply.github.com", github_login)
     });
 
-    let user = sqlx::query_as::<_, crate::models::user::User>(
+    let user = sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (email, name, github_id, github_login, created_at, updated_at)
         VALUES ($1, $2, $3, $4, NOW(), NOW())

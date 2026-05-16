@@ -1,4 +1,6 @@
 use serde_json::Value;
+use sqlx::Row;
+use uuid::Uuid;
 use crate::{AppState, errors::{AppError, AppResult}};
 
 /// push event → trigger a deployment for the linked project

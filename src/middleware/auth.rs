@@ -9,6 +9,7 @@ use axum_extra::{
 };
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
+use sqlx::Row;
 use uuid::Uuid;
 use crate::{
     AppState,

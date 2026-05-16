@@ -1,4 +1,5 @@
 use rand::Rng;
+use sqlx::Row;
 use uuid::Uuid;
 use crate::{
     AppState,
@@ -180,6 +181,7 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
 
     let _ = log_update;
 
+    let state_val = req.state.clone();
     sqlx::query(
         r#"
         UPDATE deployments SET
@@ -191,13 +193,13 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
         "#,
     )
     .bind(req.deployment_id)
-    .bind(req.state as DeploymentState)
+    .bind(req.state)
     .execute(&*state.db)
     .await?;
 
     tracing::info!(
         deployment = %req.deployment_id,
-        state = ?req.state,
+        state = ?state_val,
         "build callback processed"
     );
 
