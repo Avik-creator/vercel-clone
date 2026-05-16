@@ -1,0 +1,102 @@
+use argon2::{
+    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+    Argon2, PasswordHash, PasswordVerifier,
+};
+use chrono::Utc;
+use jsonwebtoken::{encode, EncodingKey, Header};
+use uuid::Uuid;
+
+use crate::{
+    AppState,
+    errors::{AppError, AppResult},
+    middleware::auth::Claims,
+    models::user::{AuthResponse, CreateUserRequest, LoginRequest, User},
+};
+
+
+const TOKEN_EXPIRY_SECS: i64 = 60 * 60 * 24; // 24 hours
+
+pub async fn register(state: &AppState, body: CreateUserRequest) -> AppResult<AuthResponse> {
+    // Check email not taken
+    let exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE email = $1)"
+    )
+    .bind(&req.email)
+    .fetch_one(&*state.db)
+    .await?;
+
+    if exists {
+        return Err(AppError::Conflict("email already registered".into()));
+    }
+
+    let password_hash = hash_password(&req.password)?;
+    let id = Uuid::new_v4();
+    let now = Utc::now();
+
+    let user = sqlx::query_as::<_, User>(
+        r#"
+        INSERT INTO users (email, name, password_hash, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $4)
+        RETURNING *
+        "#
+    )
+    .bind(&req.email)
+    .bind(&req.name)
+    .bind(&password_hash)
+    .bind(now)
+    .fetch_one(&*state.db)
+    .await?;
+
+    let token = mint_jwt(&user.id, &state.config.jwt_secret)?;
+    Ok(AuthResponse { token, user })
+}
+
+pub async fn login(state: &AppState, req: LoginRequest) -> AppResult<AuthResponse> {
+    let user = sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE email = $1"
+    )
+    .bind(&req.email)
+    .fetch_optional(&*state.db)
+    .await?
+    .ok_or_else(|| AppError::Unauthorized("invalid credentials".into()))?;
+
+    let hash = user.password_hash.as_deref()
+        .ok_or_else(|| AppError::Unauthorized("use github login".into()))?;
+
+    verify_password(&req.password, hash)?;
+
+    let token = mint_jwt(&user.id, &state.config.jwt_secret)?;
+    Ok(AuthResponse { token, user })
+}
+
+pub fn mint_jwt(user_id: &Uuid, secret: &str) -> AppResult<String> {
+    let now = Utc::now().timestamp();
+    let claims = Claims {
+        sub: *user_id,
+        iat: now,
+        exp: now + TOKEN_EXPIRY_SECS,
+    };
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .map_err(|e| AppError::Internal(anyhow::anyhow!("jwt error: {e}")))
+}
+
+
+pub fn hash_password(password: &str) -> AppResult<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("hash error: {e}")))
+}
+
+pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
+    let parsed = PasswordHash::new(hash)
+        .map_err(|_| AppError::Unauthorized("invalid credentials".into()))?;
+    Argon2::default()
+        .verify_password(password.as_bytes(), &parsed)
+        .map_err(|_| AppError::Unauthorized("invalid credentials".into()))
+}
