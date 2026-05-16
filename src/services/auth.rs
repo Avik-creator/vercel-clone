@@ -102,10 +102,10 @@ pub fn verify_password(password: &str, hash: &str) -> AppResult<()> {
 
 pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthResponse> {
     // Exchange code for access token via reqwest
-    let mut form_data = std::collections::HashMap::new();
-    form_data.insert("client_id", state.config.github_client_id.clone());
-    form_data.insert("client_secret", state.config.github_client_secret.clone());
-    form_data.insert("code", code.to_string());
+    let mut form_data = std::collections::HashMap::<&str, &str>::new();
+    form_data.insert("client_id", state.config.github_client_id.as_str());
+    form_data.insert("client_secret", state.config.github_client_secret.as_str());
+    form_data.insert("code", code);
 
     let token_resp = reqwest::Client::new()
         .post("https://github.com/login/oauth/access_token")
