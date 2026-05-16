@@ -26,7 +26,7 @@ pub async fn create(
 ) -> AppResult<ApiKey> {
     // Generate key: cp_<48 random hex chars>
     let raw: String = (0..48)
-        .map(|_| format!("{:x}", rand::thread_rng().gen::<u8>()))
+        .map(|_| format!("{:x}", rand::thread_rng().gen_range(0..256)))
         .collect();
     let plain = format!("cp_{raw}");
 
