@@ -130,6 +130,66 @@ impl DeploymentServers {
     }
 }
 
+/// Downloads all objects under `s3_prefix` from MinIO into `local_dir`,
+/// stripping `strip_prefix` from each key to get the relative local path.
+/// Paginates through all pages — list_objects_v2 returns at most 1000 objects per call.
+async fn download_prefix(
+    s3_client: &aws_sdk_s3::Client,
+    bucket: &str,
+    s3_prefix: &str,
+    strip_prefix: &str,
+    local_dir: &PathBuf,
+) -> anyhow::Result<u64> {
+    let mut count: u64 = 0;
+    let mut continuation_token: Option<String> = None;
+
+    loop {
+        let mut req = s3_client
+            .list_objects_v2()
+            .bucket(bucket)
+            .prefix(s3_prefix);
+
+        if let Some(ref token) = continuation_token {
+            req = req.continuation_token(token);
+        }
+
+        let resp = req.send().await?;
+        let truncated = resp.is_truncated.unwrap_or(false);
+        continuation_token = resp.next_continuation_token.clone();
+
+        for obj in resp.contents.unwrap_or_default() {
+            let key = match obj.key() {
+                Some(k) if !k.ends_with('/') => k, // skip zero-byte directory markers
+                _ => continue,
+            };
+
+            let relative = key.strip_prefix(strip_prefix).unwrap_or(key);
+            let local_path = local_dir.join(relative.trim_start_matches('/'));
+
+            if let Some(parent) = local_path.parent() {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+
+            let get_resp = s3_client
+                .get_object()
+                .bucket(bucket)
+                .key(key)
+                .send()
+                .await?;
+
+            let bytes = get_resp.body.collect().await?.into_bytes();
+            tokio::fs::write(&local_path, &bytes).await?;
+            count += 1;
+        }
+
+        if !truncated {
+            break;
+        }
+    }
+
+    Ok(count)
+}
+
 /// Downloads the standalone build from MinIO to local disk.
 async fn download_standalone(
     s3_client: &aws_sdk_s3::Client,
@@ -138,72 +198,32 @@ async fn download_standalone(
     deploy_dir: &PathBuf,
 ) -> anyhow::Result<()> {
     let prefix = artifact_key.trim_end_matches('/');
-    let standalone_prefix = format!("{}/standalone", prefix);
 
-    let list_resp = s3_client
-        .list_objects_v2()
-        .bucket(bucket)
-        .prefix(&standalone_prefix)
-        .send()
-        .await?;
+    // Download standalone/ → local standalone/
+    let standalone_prefix = format!("{}/standalone/", prefix);
+    let standalone_dir = deploy_dir.join("standalone");
+    let n = download_prefix(
+        s3_client,
+        bucket,
+        &standalone_prefix,
+        &standalone_prefix,
+        &standalone_dir,
+    )
+    .await?;
+    tracing::info!(%n, "downloaded standalone files");
 
-    if let Some(contents) = list_resp.contents {
-        for obj in contents {
-            if let Some(key) = obj.key() {
-                let relative = key.strip_prefix(&standalone_prefix).unwrap_or(key);
-                let local_path = deploy_dir.join("standalone").join(relative.trim_start_matches('/'));
-
-                if let Some(parent) = local_path.parent() {
-                    tokio::fs::create_dir_all(parent).await?;
-                }
-
-                let get_resp = s3_client
-                    .get_object()
-                    .bucket(bucket)
-                    .key(key)
-                    .send()
-                    .await?;
-
-                let bytes = get_resp.body.collect().await?.into_bytes();
-                tokio::fs::write(&local_path, &bytes).await?;
-            }
-        }
-    }
-
-    // Also download .next/static if it exists (for static assets referenced by standalone)
-    let static_prefix = format!("{}/.next/static", prefix);
-    let static_strip = format!("{}/.next/", prefix);
-    if let Ok(list_resp) = s3_client
-        .list_objects_v2()
-        .bucket(bucket)
-        .prefix(&static_prefix)
-        .send()
-        .await
-    {
-        if let Some(contents) = list_resp.contents {
-            for obj in contents {
-                if let Some(key) = obj.key() {
-                    // Strip "{uuid}/.next/" so we get "static/..." and place under standalone/.next/
-                    let relative = key.strip_prefix(&static_strip).unwrap_or(key);
-                    let local_path = deploy_dir.join("standalone").join(".next").join(relative.trim_start_matches('/'));
-
-                    if let Some(parent) = local_path.parent() {
-                        tokio::fs::create_dir_all(parent).await?;
-                    }
-
-                    let get_resp = s3_client
-                        .get_object()
-                        .bucket(bucket)
-                        .key(key)
-                        .send()
-                        .await?;
-
-                    let bytes = get_resp.body.collect().await?.into_bytes();
-                    tokio::fs::write(&local_path, &bytes).await?;
-                }
-            }
-        }
-    }
+    // Download .next/static/ → local standalone/.next/static/
+    let static_prefix = format!("{}/.next/static/", prefix);
+    let static_local = standalone_dir.join(".next").join("static");
+    let n = download_prefix(
+        s3_client,
+        bucket,
+        &static_prefix,
+        &static_prefix,
+        &static_local,
+    )
+    .await?;
+    tracing::info!(%n, "downloaded .next/static files");
 
     tracing::info!(?deploy_dir, "downloaded standalone build");
     Ok(())
