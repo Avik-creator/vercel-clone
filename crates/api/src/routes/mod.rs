@@ -37,6 +37,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/api-keys/{id}",  delete(api_keys::revoke))
 
         .route("/webhooks/github", post(github::handle_webhook))
+        .route("/v1/github/repos", get(github::list_repos))
 
         .route("/internal/builds/callback", post(deployments::build_callback))
 
