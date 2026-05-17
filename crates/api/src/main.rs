@@ -86,13 +86,13 @@ async fn main() -> anyhow::Result<()> {
         nats,
         storage,
         deployment_servers: Arc::new(DeploymentServers::new(
-            PathBuf::from("/tmp/deployments"),
+            PathBuf::from("/tmp/vercel-clone-deployments"),
             config.docker_network.clone(),
             300, // 5 minutes idle timeout
         )),
     };
 
-    tokio::fs::create_dir_all("/tmp/deployments").await?;
+    tokio::fs::create_dir_all("/tmp/vercel-clone-deployments").await?;
 
     let servers_for_cleanup = state.deployment_servers.clone();
     tokio::spawn(async move {

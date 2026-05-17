@@ -190,7 +190,7 @@ pub async fn serve_artifact(
     }
 
     // Static file not found - try Next.js standalone server
-    let port: u16 = state
+    let container_base = state
         .deployment_servers
         .get_or_start(
             deployment.id,
@@ -209,7 +209,7 @@ pub async fn serve_artifact(
         .map_err(|e| AppError::Internal(e.into()))?;
 
     let full_url = {
-        let base = format!("http://127.0.0.1:{}{}", port, uri.path());
+        let base = format!("{}{}", container_base, uri.path());
         match uri.query() {
             Some(q) if !q.is_empty() => format!("{}?{}", base, q),
             _ => base,

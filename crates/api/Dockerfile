@@ -19,13 +19,17 @@ RUN cargo chef cook --release -p vercel-clone-api --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --locked -p vercel-clone-api
 
-# --- runtime: minimal image with Node.js for serving standalone Next.js apps ---
+# --- runtime: minimal image with docker CLI to spawn deployment containers ---
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 curl gnupg && \
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
-    apt-get purge -y curl gnupg && \
+    ca-certificates libssl3 curl gnupg lsb-release && \
+    install -m 0755 -d /etc/apt/keyrings && \
+    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
+    chmod a+r /etc/apt/keyrings/docker.asc && \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list && \
+    apt-get update && apt-get install -y --no-install-recommends docker-ce-cli && \
+    apt-get purge -y curl gnupg lsb-release && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 

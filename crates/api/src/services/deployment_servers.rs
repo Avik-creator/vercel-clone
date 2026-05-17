@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,7 +7,6 @@ use uuid::Uuid;
 
 /// Manages running Next.js standalone deployment containers.
 pub struct DeploymentServers {
-    /// deployment_id → container name
     containers: Arc<Mutex<HashMap<Uuid, RunningContainer>>>,
     work_dir: PathBuf,
     docker_network: String,
@@ -17,7 +15,6 @@ pub struct DeploymentServers {
 
 struct RunningContainer {
     name: String,
-    port: u16,
     last_accessed: Instant,
 }
 
@@ -31,19 +28,19 @@ impl DeploymentServers {
         }
     }
 
-    /// Return the local port the container is listening on, starting it if necessary.
+    /// Return the container's base URL (reachable within the Docker network), starting it if necessary.
     pub async fn get_or_start(
         &self,
         deployment_id: Uuid,
         artifact_key: &str,
         s3_client: &aws_sdk_s3::Client,
         bucket: &str,
-    ) -> anyhow::Result<u16> {
+    ) -> anyhow::Result<String> {
         {
             let mut containers = self.containers.lock().await;
             if let Some(c) = containers.get_mut(&deployment_id) {
                 c.last_accessed = Instant::now();
-                return Ok(c.port);
+                return Ok(container_url(&c.name));
             }
         }
 
@@ -64,7 +61,6 @@ impl DeploymentServers {
             );
         }
 
-        let port = find_free_port()?;
         let container_name = format!("serve-{}", deployment_id);
 
         // Remove any stale container from a previous run.
@@ -85,8 +81,6 @@ impl DeploymentServers {
                 &container_name,
                 "--network",
                 &self.docker_network,
-                "-p",
-                &format!("127.0.0.1:{}:3000", port),
                 "-e",
                 "NODE_ENV=production",
                 "-e",
@@ -108,32 +102,30 @@ impl DeploymentServers {
             anyhow::bail!("failed to start deployment container for {}", deployment_id);
         }
 
-        tracing::info!(%deployment_id, %port, container = %container_name, "started deployment container");
+        tracing::info!(%deployment_id, container = %container_name, "started deployment container");
 
         {
             let mut containers = self.containers.lock().await;
             // Prefer an already-started entry (race between concurrent first requests).
             if let Some(c) = containers.get_mut(&deployment_id) {
                 c.last_accessed = Instant::now();
-                // Kill the container we just started since another one won.
                 let _ = tokio::process::Command::new("docker")
                     .args(["rm", "-f", &container_name])
                     .output()
                     .await;
-                return Ok(c.port);
+                return Ok(container_url(&c.name));
             }
             containers.insert(
                 deployment_id,
                 RunningContainer {
-                    name: container_name,
-                    port,
+                    name: container_name.clone(),
                     last_accessed: Instant::now(),
                 },
             );
         }
 
-        wait_for_port(port, Duration::from_secs(30)).await?;
-        Ok(port)
+        wait_for_container(&container_name, Duration::from_secs(30)).await?;
+        Ok(container_url(&container_name))
     }
 
     /// Stop and remove the container for a deployment.
@@ -169,6 +161,10 @@ impl DeploymentServers {
             tracing::info!(%id, container = %name, "cleaned up idle deployment container");
         }
     }
+}
+
+fn container_url(name: &str) -> String {
+    format!("http://{}:3000", name)
 }
 
 /// Downloads all objects under `s3_prefix`, stripping `strip_prefix` from
@@ -267,22 +263,24 @@ async fn download_standalone(
     Ok(())
 }
 
-fn find_free_port() -> anyhow::Result<u16> {
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    Ok(listener.local_addr()?.port())
-}
-
-async fn wait_for_port(port: u16, timeout: Duration) -> anyhow::Result<()> {
-    let addr = format!("127.0.0.1:{}", port);
+/// Poll the container's HTTP endpoint (via Docker network name) until it responds.
+async fn wait_for_container(container_name: &str, timeout: Duration) -> anyhow::Result<()> {
+    let url = format!("http://{}:3000/", container_name);
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()?;
     let deadline = tokio::time::Instant::now() + timeout;
 
     loop {
-        if tokio::net::TcpStream::connect(&addr).await.is_ok() {
+        if client.get(&url).send().await.is_ok() {
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("deployment container on port {} did not start within timeout", port);
+            anyhow::bail!(
+                "deployment container {} did not become ready within timeout",
+                container_name
+            );
         }
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
     }
 }

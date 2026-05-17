@@ -79,7 +79,7 @@ services:
       - "8080:8080" # keep direct access for dev
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # needed to manage deployment containers
-      - /tmp/vercel-clone-deployments:/tmp/deployments
+      - /tmp/vercel-clone-deployments:/tmp/vercel-clone-deployments
     env_file:
       - .env
     environment:
@@ -102,7 +102,7 @@ services:
 
       # Preview deployments — *.localhost catch-all also goes to the API.
       # serve_artifact handles static files from MinIO and proxies SSR to node containers.
-      - "traefik.http.routers.serve.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.localhost`)"
+      - "traefik.http.routers.serve.rule=HostRegexp(`[a-z0-9-]+\\.localhost`)"
       - "traefik.http.routers.serve.entrypoints=web"
       - "traefik.http.routers.serve.service=api"
       - "traefik.http.routers.serve.priority=10"
