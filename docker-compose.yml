@@ -179,7 +179,8 @@ services:
       - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /tmp/vercel-clone-deployments:/tmp/vercel-clone-deployments
+    tmpfs:
+      - /tmp/vercel-clone-deployments:uid=1001,gid=1001
     env_file:
       - .env
     environment:
@@ -234,7 +235,8 @@ services:
         condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - worker_tmp:/tmp/builds
+    tmpfs:
+      - /tmp/builds:uid=1001,gid=1001
     env_file:
       - .env
     environment:
@@ -349,7 +351,7 @@ volumes:
   pgdata:
   nats_data:
   minio_data:
-  worker_tmp:
+  # worker_tmp removed — worker uses tmpfs for ephemeral build directories
   traefik_acme:
   registry_data:
   prometheus_data:
