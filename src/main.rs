@@ -22,12 +22,13 @@ mod models;
 mod routes;
 mod services;
 
-use crate::{config::AppConfig, db::Database};
+use crate::{config::AppConfig, db::Database, model::build_job::LogLine, services::nats::NatsClient};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Database,
     pub config: Arc<AppConfig>,
+    pub nats: NatsClient,
 }
 
 #[tokio::main]
@@ -48,7 +49,17 @@ async fn main() -> anyhow::Result<()> {
     let db = Database::connect(&config.database_url).await?;
     db.run_migrations().await?;
 
-    let state = AppState { db, config: config.clone() };
+    let nats = NatsClient::connect(&config).await?;
+    tracing::info!(url = %config.nats_url, "nats connected");
+
+    let state = AppState { db, config: config.clone(), nats };
+
+    let nats_for_logs = state.nats.clone();
+    tokio::spawn(async move {
+        if let Err(e) = subscribe_all_logs(nats_for_logs).await {
+            tracing::error!(error = %e, "log subscriber failed");
+        }
+    });
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -68,5 +79,26 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!(addr = %addr, "listening");
 
     axum::serve(listener, app).await?;
+    Ok(())
+}
+
+async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
+    use futures::StreamExt;
+
+    let mut subscriber = nats
+        .client
+        .subscribe("build.logs.>")
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to subscribe to build.logs.>: {}", e))?;
+
+    tracing::info!("subscribed to all build logs");
+
+    while let Some(msg) = subscriber.next().await {
+        if let Ok(log) = serde_json::from_slice::<LogLine>(&msg.payload) {
+            let sender = nats.get_log_sender(log.deployment_id);
+            let _ = sender.send(log);
+        }
+    }
+
     Ok(())
 }

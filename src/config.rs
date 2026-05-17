@@ -27,6 +27,9 @@ pub struct AppConfig {
 
     #[serde(default = "default_base_domain")]
     pub base_domain: String,
+
+    #[serde(default = "default_nats_url")]
+    pub nats_url: String,
 }
 
 impl AppConfig {
@@ -47,3 +50,4 @@ fn default_host() -> String { "0.0.0.0".into() }
 fn default_port() -> u16 { 3000 }
 fn default_env() -> String { "development".into() }
 fn default_base_domain() -> String { "localhost".into() }
+fn default_nats_url() -> String { "nats://localhost:4222".into() }

@@ -1,10 +1,11 @@
 use rand::Rng;
 use sqlx::Row;
+use std::collections::HashMap;
 use uuid::Uuid;
 use crate::{
     AppState,
     errors::{AppError, AppResult, NotFoundExt},
-    models::{BuildCallbackRequest, CreateDeploymentRequest, Deployment, DeploymentState},
+    models::{BuildCallbackRequest, BuildJob, CreateDeploymentRequest, Deployment, DeploymentState},
 };
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Deployment>> {
@@ -92,13 +93,32 @@ pub async fn create(
     .fetch_one(&*state.db)
     .await?;
 
-    // Dispatch build job
-    // TODO: push to NATS JetStream or internal queue
+    // Dispatch build job via NATS JetStream
+    let git_url = if let Some(ref repo) = github_repo {
+        format!("https://github.com/{}.git", repo)
+    } else {
+        String::new()
+    };
+
+    let build_job = BuildJob {
+        deployment_id: deployment.id,
+        project_id,
+        git_url,
+        commit_sha: req.commit_sha.clone(),
+        branch: req.branch.clone(),
+        build_command: project.try_get("build_command").ok().flatten(),
+        output_dir: project.try_get("output_dir").ok().flatten(),
+        github_token: None,
+        env_vars: HashMap::new(),
+    };
+
+    state.nats.publish_job(&build_job).await?;
+
     tracing::info!(
         deployment_id = %deployment.id,
         commit = %req.commit_sha,
         repo = ?github_repo,
-        "dispatching build job"
+        "build job published to NATS"
     );
 
     Ok(deployment)

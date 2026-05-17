@@ -29,3 +29,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = "2"
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 octocrab = "0.50.0"
+async-nats = "0.42"
+async-stream = "0.3"

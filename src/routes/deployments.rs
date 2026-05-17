@@ -3,7 +3,7 @@ use axum::{
     Json,
     response::sse::{Event, Sse},
 };
-use futures::stream;
+use futures::Stream;
 use serde_json::Value;
 use uuid::Uuid;
 use crate::{
@@ -70,14 +70,30 @@ pub async fn promote(
 }
 
 pub async fn stream_logs(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     AuthUser(_user): AuthUser,
-    Path(_id): Path<Uuid>,
-) -> Sse<impl futures::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let placeholder = stream::iter(vec![
-        Ok(Event::default().data("log streaming not yet implemented")),
-    ]);
-    Sse::new(placeholder)
+    Path(id): Path<Uuid>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let sender = state.nats.get_log_sender(id);
+    let mut receiver = sender.subscribe();
+
+    let stream = async_stream::stream! {
+        loop {
+            match receiver.recv().await {
+                Ok(log_line) => {
+                    yield Ok(Event::default().data(format!("{}: {}", log_line.timestamp.format("%H:%M:%S"), log_line.line)));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    yield Ok(Event::default().data(format!("[lagged: {} lines dropped]", n)));
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    };
+
+    Sse::new(stream)
 }
 
 pub async fn build_callback(

@@ -17,6 +17,17 @@ services:
       timeout: 3s
       retries: 5
 
+  nats:
+    image: nats:2.11-alpine
+    container_name: vercel-clone-nats
+    restart: unless-stopped
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+    volumes:
+      - nats_data:/var/lib/nats
+
   api:
     build:
       context: .
@@ -26,12 +37,15 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      nats:
+        condition: service_started
     ports:
       - "3000:3000"
     env_file:
       - .env
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/vercel_clone
+      NATS_URL: nats://nats:4222
     develop:
       watch:
         - action: rebuild
@@ -40,3 +54,4 @@ services:
 
 volumes:
   pgdata:
+  nats_data:
