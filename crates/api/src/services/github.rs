@@ -16,9 +16,9 @@ pub async fn get_installation_token(state: &AppState, installation_id: i64) -> A
         .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
 
     let token = octocrab
-        .installation(installation_id as u64)
+        .installation(octocrab::models::InstallationId(installation_id as u64))
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to get installation client: {e}")))?
-        .installation_access_token()
+        .installation_token()
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to get installation token: {e}")))?;
 
