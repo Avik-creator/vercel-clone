@@ -92,15 +92,20 @@ services:
       DOCKER_NETWORK: vercel-clone_default
     labels:
       - "traefik.enable=true"
-      # REST API: api.localhost → API
+      - "traefik.http.services.api.loadbalancer.server.port=8080"
+
+      # REST API — api.localhost goes to the API
       - "traefik.http.routers.api.rule=Host(`api.localhost`)"
       - "traefik.http.routers.api.entrypoints=web"
-      - "traefik.http.services.api.loadbalancer.server.port=8080"
-      # Static file serving: *.localhost (non-API hosts) → API serve_artifact
-      - "traefik.http.routers.serve-static.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.localhost`) && PathPrefix(`/_next/static/`, `/favicon`, `/manifest`, `/icons`, `/images`)"
-      - "traefik.http.routers.serve-static.entrypoints=web"
-      - "traefik.http.routers.serve-static.priority=20"
-      - "traefik.http.routers.serve-static.service=api"
+      - "traefik.http.routers.api.service=api"
+      - "traefik.http.routers.api.priority=30"
+
+      # Preview deployments — *.localhost catch-all also goes to the API.
+      # serve_artifact handles static files from MinIO and proxies SSR to node containers.
+      - "traefik.http.routers.serve.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.localhost`)"
+      - "traefik.http.routers.serve.entrypoints=web"
+      - "traefik.http.routers.serve.service=api"
+      - "traefik.http.routers.serve.priority=10"
 
   worker:
     build:
