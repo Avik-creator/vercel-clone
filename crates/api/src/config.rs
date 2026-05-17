@@ -53,6 +53,6 @@ impl AppConfig {
 fn default_host() -> String { "0.0.0.0".into() }
 fn default_port() -> u16 { 3000 }
 fn default_env() -> String { "development".into() }
-fn default_base_domain() -> String { "localhost".into() }
+fn default_base_domain() -> String { "http://localhost:8080".into() }
 fn default_nats_url() -> String { "nats://localhost:4222".into() }
 fn default_frontend_url() -> String { "http://localhost:3000".into() }
