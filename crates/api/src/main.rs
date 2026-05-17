@@ -6,6 +6,7 @@ use axum::{
     http::{Method, StatusCode},
 };
 use std::time::Duration;
+use tokio::signal;
 use tower_http::{
     cors::{Any, CorsLayer},
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
@@ -88,35 +89,37 @@ async fn main() -> anyhow::Result<()> {
         deployment_servers: Arc::new(DeploymentServers::new(
             PathBuf::from("/tmp/vercel-clone-deployments"),
             config.docker_network.clone(),
-            300, // 5 minutes idle timeout
+            300,
         )),
     };
 
     tokio::fs::create_dir_all("/tmp/vercel-clone-deployments").await?;
 
     let servers_for_cleanup = state.deployment_servers.clone();
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-            servers_for_cleanup.cleanup_idle().await;
+    tokio::spawn(supervised("idle-cleanup", move || {
+        let servers = servers_for_cleanup.clone();
+        async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                servers.cleanup_idle().await;
+            }
         }
-    });
+    }));
 
     let nats_for_logs = state.nats.clone();
-    tokio::spawn(async move {
-        if let Err(e) = subscribe_all_logs(nats_for_logs).await {
-            tracing::error!(error = %e, "log subscriber failed");
-        }
-    });
+    tokio::spawn(supervised("log-subscriber", move || {
+        let nats = nats_for_logs.clone();
+        async move { subscribe_all_logs(nats).await }
+    }));
 
     let nats_for_results = state.nats.clone();
     let db_for_results = state.db.clone();
-    tokio::spawn(async move {
-        if let Err(e) = subscribe_build_results(nats_for_results, db_for_results).await {
-            tracing::error!(error = %e, "build result subscriber failed");
-        }
-    });
+    tokio::spawn(supervised("build-result-subscriber", move || {
+        let nats = nats_for_results.clone();
+        let db = db_for_results.clone();
+        async move { subscribe_build_results(nats, db).await }
+    }));
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
@@ -144,8 +147,49 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(addr = %addr, "listening");
 
-    axum::serve(listener, app).await?;
+    let shutdown_signal = shutdown_signal();
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal)
+        .await?;
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("shutdown signal received, draining connections...");
+}
+
+async fn supervised<F, Fut>(name: &'static str, mut factory: F)
+where
+    F: FnMut() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = anyhow::Result<()>> + Send + 'static,
+{
+    loop {
+        let result = factory().await;
+        tracing::error!(task = name, ?result, "task exited, restarting in 5s");
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
 }
 
 async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
@@ -173,7 +217,7 @@ async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
 async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Result<()> {
     use futures::StreamExt;
 
-    let mut subscriber = nats
+    let subscriber = nats
         .subscribe_results()
         .await
         .map_err(|e| anyhow::anyhow!("failed to subscribe to build results: {}", e))?;
@@ -254,10 +298,7 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             tracing::error!(error = %e, "failed to update deployment state");
         }
 
-        // Flush buffered logs to the DB and close the SSE broadcast channel.
         if is_terminal {
-            // Give any in-flight NATS log messages a moment to arrive and be buffered
-            // before we take the buffer (logs and results are on different channels).
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
             let buffered_log = nats.take_log_buffer(result.deployment_id).await;

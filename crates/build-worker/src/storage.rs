@@ -5,6 +5,9 @@ use walkdir::WalkDir;
 use crate::models::LogLine;
 use crate::nats::WorkerNats;
 
+const MAX_ARTIFACT_SIZE_BYTES: u64 = 500 * 1024 * 1024;
+const MAX_SINGLE_FILE_BYTES: u64 = 50 * 1024 * 1024;
+
 #[derive(Clone)]
 pub struct Storage {
     client: aws_sdk_s3::Client,
@@ -69,10 +72,30 @@ impl Storage {
             format!("{}{}/", root, sub_prefix.trim_matches('/'))
         };
 
+        let mut total_bytes: u64 = 0;
+
         for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
             if !path.is_file() {
                 continue;
+            }
+
+            let metadata = tokio::fs::metadata(path).await?;
+            let file_size = metadata.len();
+
+            if file_size > MAX_SINGLE_FILE_BYTES {
+                anyhow::bail!(
+                    "file {} ({}MB) exceeds 50MB single-file limit",
+                    path.display(),
+                    file_size / 1024 / 1024
+                );
+            }
+
+            if total_bytes + file_size > MAX_ARTIFACT_SIZE_BYTES {
+                anyhow::bail!(
+                    "artifact total size ({}MB) exceeds 500MB limit",
+                    (total_bytes + file_size) / 1024 / 1024
+                );
             }
 
             let relative = path.strip_prefix(dir)?;
@@ -89,6 +112,8 @@ impl Storage {
                 .body(stream)
                 .send()
                 .await?;
+
+            total_bytes += file_size;
 
             let log = LogLine {
                 deployment_id,

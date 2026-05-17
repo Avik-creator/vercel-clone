@@ -28,4 +28,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=builder /app/target/release/vercel-clone-worker .
 
+RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
+    chown -R appuser:appuser /app
+
+USER appuser
 CMD ["./vercel-clone-worker"]

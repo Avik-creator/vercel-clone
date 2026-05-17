@@ -10,30 +10,48 @@ services:
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=vercel-clone_default
       - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:-you@example.com}
+      - --certificatesresolvers.letsencrypt.acme.storage=/acme.json
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
       - --log.level=INFO
     ports:
       - "80:80"
-      - "8081:8080" # Traefik dashboard at http://localhost:8081
+      - "443:443"
+      - "8081:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_acme:/letsencrypt
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
   db:
     image: postgres:17-alpine
     container_name: vercel-clone-db
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: vercel_clone
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
       interval: 5s
       timeout: 3s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
 
   nats:
     image: nats:2.11-alpine
@@ -42,9 +60,20 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
-    command: ["-js", "-m", "8222"]
+    command: ["-js", "-m", "8222", "--user", "${NATS_USER:-nats}", "--pass", "${NATS_PASSWORD}"]
     volumes:
       - nats_data:/var/lib/nats
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   minio:
     image: minio/minio:latest
@@ -54,11 +83,22 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
 
   api:
     build:
@@ -70,42 +110,54 @@ services:
       db:
         condition: service_healthy
       nats:
-        condition: service_started
+        condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     expose:
       - "8080"
     ports:
-      - "8080:8080" # keep direct access for dev
+      - "8080:8080"
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock # needed to manage deployment containers
+      - /var/run/docker.sock:/var/run/docker.sock
       - /tmp/vercel-clone-deployments:/tmp/vercel-clone-deployments
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://postgres:postgres@db:5432/vercel_clone
-      NATS_URL: nats://nats:4222
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/vercel_clone?sslmode=prefer
+      NATS_URL: nats://${NATS_USER:-nats}:${NATS_PASSWORD}@nats:4222
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: deployments
       DOCKER_NETWORK: vercel-clone_default
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
     labels:
       - "traefik.enable=true"
       - "traefik.http.services.api.loadbalancer.server.port=8080"
 
       # REST API — api.localhost goes to the API
       - "traefik.http.routers.api.rule=Host(`api.localhost`)"
-      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.routers.api.entrypoints=websecure"
       - "traefik.http.routers.api.service=api"
       - "traefik.http.routers.api.priority=30"
+      - "traefik.http.routers.api.tls.certresolver=letsencrypt"
 
       # Preview deployments — *.localhost catch-all also goes to the API.
-      # serve_artifact handles static files from MinIO and proxies SSR to node containers.
       - "traefik.http.routers.serve.rule=HostRegexp(`[a-z0-9-]+\\.localhost`)"
-      - "traefik.http.routers.serve.entrypoints=web"
+      - "traefik.http.routers.serve.entrypoints=websecure"
       - "traefik.http.routers.serve.service=api"
       - "traefik.http.routers.serve.priority=10"
+      - "traefik.http.routers.serve.tls.certresolver=letsencrypt"
 
   worker:
     build:
@@ -114,25 +166,37 @@ services:
     restart: unless-stopped
     depends_on:
       nats:
-        condition: service_started
+        condition: service_healthy
       minio:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - worker_tmp:/tmp/builds
     env_file:
       - .env
     environment:
-      NATS_URL: nats://nats:4222
+      NATS_URL: nats://${NATS_USER:-nats}:${NATS_PASSWORD}@nats:4222
       MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: deployments
       DOCKER_NETWORK: vercel-clone_default
       MAX_CONCURRENT_BUILDS: 2
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/worker-alive || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
 volumes:
   pgdata:
   nats_data:
   minio_data:
   worker_tmp:
+  traefik_acme:

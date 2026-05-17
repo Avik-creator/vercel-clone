@@ -7,6 +7,7 @@ mod storage;
 use futures::StreamExt;
 use std::path::PathBuf;
 use std::sync::Arc;
+use tokio::signal;
 
 use crate::models::{BuildResult, DeploymentState, LogLine};
 
@@ -40,104 +41,163 @@ async fn main() -> anyhow::Result<()> {
     let work_base = PathBuf::from("/tmp/builds");
     tokio::fs::create_dir_all(&work_base).await?;
 
+    tokio::spawn(async {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            let _ = tokio::fs::write("/tmp/worker-alive", "").await;
+        }
+    });
+
     let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_builds));
     tracing::info!(max_concurrent = config.max_concurrent_builds, "subscribing to build jobs");
 
     let jobs = nats.subscribe_jobs().await?;
     tokio::pin!(jobs);
 
-    while let Some(job) = jobs.next().await {
-        let permit = semaphore.clone().acquire_owned().await.unwrap();
-        let nats = nats.clone();
-        let storage = storage.clone();
-        let work_base = work_base.clone();
-        let docker_network = config.docker_network.clone();
-        let build_timeout_secs = config.build_timeout_secs;
+    let shutdown = shutdown_signal();
+    tokio::pin!(shutdown);
 
-        tokio::spawn(async move {
-            let _permit = permit;
-            let deployment_id = job.deployment_id;
-            tracing::info!(
-                %deployment_id,
-                branch = %job.branch,
-                commit = %job.commit_sha,
-                "processing build job"
-            );
+    loop {
+        tokio::select! {
+            biased;
+            _ = &mut shutdown => {
+                tracing::info!("shutdown signal received, draining in-flight builds...");
+                semaphore.close();
+                break;
+            }
+            job = jobs.next() => {
+                let Some(job) = job else {
+                    tracing::info!("job stream ended");
+                    break;
+                };
 
-            let _ = nats
-                .publish_log(&LogLine {
-                    deployment_id,
-                    line: "build started".to_string(),
-                    timestamp: chrono::Utc::now(),
-                })
-                .await;
-
-            // Signal that the build is actively running so the API sets build_started_at.
-            let _ = nats
-                .publish_result(&BuildResult {
-                    deployment_id,
-                    state: DeploymentState::Building,
-                    artifact_key: None,
-                    log_output: None,
-                    error_message: None,
-                })
-                .await;
-
-            let result = match process_job(
-                &job,
-                &nats,
-                &storage,
-                &work_base,
-                &docker_network,
-                build_timeout_secs,
-            )
-            .await
-            {
-                Ok(artifact_key) => {
-                    tracing::info!(%deployment_id, "build succeeded");
-                    BuildResult {
-                        deployment_id,
-                        state: DeploymentState::Ready,
-                        artifact_key: Some(artifact_key),
-                        log_output: None,
-                        error_message: None,
+                let permit = match semaphore.clone().acquire_owned().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        tracing::info!("semaphore closed, rejecting job");
+                        continue;
                     }
-                }
-                Err(e) => {
-                    tracing::error!(%deployment_id, error = %e, "build failed");
+                };
+
+                let nats = nats.clone();
+                let storage = storage.clone();
+                let work_base = work_base.clone();
+                let docker_network = config.docker_network.clone();
+                let build_timeout_secs = config.build_timeout_secs;
+
+                tokio::spawn(async move {
+                    let _permit = permit;
+                    let deployment_id = job.deployment_id;
+                    tracing::info!(
+                        %deployment_id,
+                        branch = %job.branch,
+                        commit = %job.commit_sha,
+                        "processing build job"
+                    );
+
                     let _ = nats
                         .publish_log(&LogLine {
                             deployment_id,
-                            line: format!("error: {}", e),
+                            line: "build started".to_string(),
                             timestamp: chrono::Utc::now(),
                         })
                         .await;
-                    BuildResult {
-                        deployment_id,
-                        state: DeploymentState::Error,
-                        artifact_key: None,
-                        log_output: None,
-                        error_message: Some(e.to_string()),
+
+                    let _ = nats
+                        .publish_result(&BuildResult {
+                            deployment_id,
+                            state: DeploymentState::Building,
+                            artifact_key: None,
+                            log_output: None,
+                            error_message: None,
+                        })
+                        .await;
+
+                    let result = match process_job(
+                        &job,
+                        &nats,
+                        &storage,
+                        &work_base,
+                        &docker_network,
+                        build_timeout_secs,
+                    )
+                    .await
+                    {
+                        Ok(artifact_key) => {
+                            tracing::info!(%deployment_id, "build succeeded");
+                            BuildResult {
+                                deployment_id,
+                                state: DeploymentState::Ready,
+                                artifact_key: Some(artifact_key),
+                                log_output: None,
+                                error_message: None,
+                            }
+                        }
+                        Err(e) => {
+                            tracing::error!(%deployment_id, error = %e, "build failed");
+                            let _ = nats
+                                .publish_log(&LogLine {
+                                    deployment_id,
+                                    line: format!("error: {}", e),
+                                    timestamp: chrono::Utc::now(),
+                                })
+                                .await;
+                            BuildResult {
+                                deployment_id,
+                                state: DeploymentState::Error,
+                                artifact_key: None,
+                                log_output: None,
+                                error_message: Some(e.to_string()),
+                            }
+                        }
+                    };
+
+                    if let Err(e) = nats.publish_result(&result).await {
+                        tracing::error!(%deployment_id, error = %e, "failed to publish build result");
                     }
-                }
-            };
 
-            if let Err(e) = nats.publish_result(&result).await {
-                tracing::error!(%deployment_id, error = %e, "failed to publish build result");
+                    let work_dir = work_base.join(deployment_id.to_string());
+                    let _ = tokio::fs::remove_dir_all(&work_dir).await;
+
+                    let container_name = format!("build-{}", deployment_id);
+                    let _ = tokio::process::Command::new("docker")
+                        .args(["rm", "-f", &container_name])
+                        .output()
+                        .await;
+                });
             }
-
-            let work_dir = work_base.join(deployment_id.to_string());
-            let _ = tokio::fs::remove_dir_all(&work_dir).await;
-
-            let container_name = format!("build-{}", deployment_id);
-            let _ = tokio::process::Command::new("docker")
-                .args(["rm", "-f", &container_name])
-                .output()
-                .await;
-        });
+        }
     }
 
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    let _ = tokio::fs::remove_file("/tmp/worker-alive").await;
+    tracing::info!("worker shut down gracefully");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
 
 async fn process_job(
