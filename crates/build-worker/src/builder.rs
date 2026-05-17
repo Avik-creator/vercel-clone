@@ -39,13 +39,16 @@ pub async fn run_build(
         "--workdir", "/app",
         "-e", &format!("PROJECT_ID={}", job.project_id),
         "-e", &format!("DEPLOYMENT_ID={}", job.deployment_id),
-        &node_image,
-        "sh", "-c", &full_cmd,
     ]);
 
     for (key, value) in &job.env_vars {
         cmd.arg("-e").arg(format!("{}={}", key, value));
     }
+
+    cmd.args([
+        &node_image,
+        "sh", "-c", &full_cmd,
+    ]);
 
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped());

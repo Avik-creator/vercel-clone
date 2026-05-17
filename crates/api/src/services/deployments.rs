@@ -90,7 +90,7 @@ pub async fn create(
     let preview_hash: String = (0..8)
         .map(|_| format!("{:x}", rand::thread_rng().gen_range(0..16)))
         .collect();
-    let preview_url = format!("http://{}-{}.{}", preview_hash, "preview", state.config.base_domain);
+    let preview_url = format!("{}-{}.{}", preview_hash, "preview", state.config.base_domain);
 
     let deployment = sqlx::query_as::<_, Deployment>(
         r#"
