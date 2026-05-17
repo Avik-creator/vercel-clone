@@ -247,18 +247,6 @@ async fn download_standalone(
     )
     .await?;
     tracing::info!(%n, "downloaded standalone files");
-
-    let static_prefix = format!("{}/.next/static/", prefix);
-    let n = download_prefix(
-        s3_client,
-        bucket,
-        &static_prefix,
-        &static_prefix,
-        &deploy_dir.join("standalone").join(".next").join("static"),
-    )
-    .await?;
-    tracing::info!(%n, "downloaded .next/static files");
-
     tracing::info!(?deploy_dir, "downloaded standalone build");
     Ok(())
 }

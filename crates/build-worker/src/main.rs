@@ -184,16 +184,22 @@ async fn process_job(
 
     let artifact_key = match output_type {
         OutputType::Standalone => {
-            // Next.js standalone: upload standalone/ and .next/static/ under the right prefixes
-            // so deployment_servers.rs can find them.
+            // Next.js standalone deployment: copy standalone/ then put static assets and
+            // public/ inside it so server.js serves them without a separate CDN step.
             let local_standalone = work_dir.join("standalone");
-            let local_static = work_dir.join("next_static");
             tokio::fs::create_dir_all(&local_standalone).await?;
-            tokio::fs::create_dir_all(&local_static).await?;
 
             docker_cp(&container_name, "/app/repo/.next/standalone/.", &local_standalone).await?;
 
-            // Copy public/ into standalone/public if it exists
+            // .next/static/ must live at standalone/.next/static/ for server.js to serve it.
+            docker_cp(
+                &container_name,
+                "/app/repo/.next/static/.",
+                &local_standalone.join(".next").join("static"),
+            )
+            .await?;
+
+            // public/ is optional
             let public_cp = tokio::process::Command::new("docker")
                 .args([
                     "cp",
@@ -204,27 +210,13 @@ async fn process_job(
                 .await;
             if let Ok(s) = public_cp {
                 if !s.success() {
-                    // public/ is optional
                     let _ = tokio::fs::remove_dir_all(local_standalone.join("public")).await;
                 }
             }
 
-            // Copy .next/static for client-side assets
-            docker_cp(
-                &container_name,
-                "/app/repo/.next/static/.",
-                &local_static,
-            )
-            .await?;
-
-            // Upload: standalone/ → {uuid}/standalone/, static/ → {uuid}/.next/static/
-            let artifact_key = storage
-                .upload_dir_with_prefix(job.deployment_id, &local_standalone, "standalone", nats)
-                .await?;
             storage
-                .upload_dir_with_prefix(job.deployment_id, &local_static, ".next/static", nats)
-                .await?;
-            artifact_key
+                .upload_dir_with_prefix(job.deployment_id, &local_standalone, "standalone", nats)
+                .await?
         }
         OutputType::Static(ref dir) => {
             let local_output = work_dir.join("output");

@@ -183,13 +183,8 @@ pub async fn serve_artifact(
         return Ok(response);
     }
 
-    // /_next/static/ assets must come from MinIO — the standalone server.js doesn't
-    // serve them. Return 404 immediately rather than proxying unnecessarily.
-    if deploy_service::is_nextjs_static_asset(uri.path()) {
-        return Err(AppError::NotFound("static asset not found".into()));
-    }
-
-    // Static file not found - try Next.js standalone server
+    // Static file not found in MinIO - proxy to the Next.js standalone server.
+    // server.js serves /_next/static/ directly from its own .next/static/ directory.
     let container_base = state
         .deployment_servers
         .get_or_start(
