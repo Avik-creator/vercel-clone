@@ -146,6 +146,13 @@ services:
     container_name: buildkit
     restart: unless-stopped
     privileged: true
+    command: ["--addr", "tcp://0.0.0.0:1234", "--addr", "unix:///run/buildkit/buildkitd.sock"]
+    healthcheck:
+      test: ["CMD", "buildctl", "debug", "info", "--addr", "tcp://localhost:1234"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     networks:
       - default
       - build-net
@@ -231,7 +238,7 @@ services:
       registry:
         condition: service_started
       buildkit:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     tmpfs:
@@ -245,7 +252,7 @@ services:
       REGISTRY_URL: localhost:5000
       BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2
-      BUILDKIT_HOST: docker-container://buildkit
+      BUILDKIT_HOST: tcp://buildkit:1234
     networks:
       - default
       - build-net
