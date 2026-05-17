@@ -125,7 +125,6 @@ pub async fn serve_artifact(
     let host = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
-        .map(|value| value.split(':').next().unwrap_or(value))
         .ok_or_else(|| AppError::NotFound("deployment not found".into()))?;
 
     let artifact_key = sqlx::query_scalar::<_, String>(
