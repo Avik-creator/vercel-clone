@@ -20,6 +20,8 @@ pub struct NatsClient {
     pub client: async_nats::Client,
     pub context: async_nats::jetstream::Context,
     pub log_broadcasts: Arc<tokio::sync::Mutex<HashMap<Uuid, broadcast::Sender<LogLine>>>>,
+    /// Accumulates log lines per deployment so they can be persisted once the build finishes.
+    pub log_buffers: Arc<tokio::sync::Mutex<HashMap<Uuid, String>>>,
 }
 
 impl NatsClient {
@@ -43,6 +45,7 @@ impl NatsClient {
             client,
             context,
             log_broadcasts: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            log_buffers: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -119,6 +122,20 @@ impl NatsClient {
     pub async fn close_log_sender(&self, deployment_id: Uuid) {
         let mut broadcasts = self.log_broadcasts.lock().await;
         broadcasts.remove(&deployment_id);
+    }
+
+    /// Append a log line to the in-memory buffer for later persistence.
+    pub async fn buffer_log_line(&self, deployment_id: Uuid, line: &str) {
+        let mut buffers = self.log_buffers.lock().await;
+        let entry = buffers.entry(deployment_id).or_default();
+        entry.push_str(line);
+        entry.push('\n');
+    }
+
+    /// Take (remove and return) the accumulated log for a deployment.
+    pub async fn take_log_buffer(&self, deployment_id: Uuid) -> String {
+        let mut buffers = self.log_buffers.lock().await;
+        buffers.remove(&deployment_id).unwrap_or_default()
     }
 }
 

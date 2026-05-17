@@ -68,6 +68,17 @@ async fn main() -> anyhow::Result<()> {
                 })
                 .await;
 
+            // Signal that the build is actively running so the API sets build_started_at.
+            let _ = nats
+                .publish_result(&BuildResult {
+                    deployment_id,
+                    state: DeploymentState::Building,
+                    artifact_key: None,
+                    log_output: None,
+                    error_message: None,
+                })
+                .await;
+
             let result = match process_job(
                 &job,
                 &nats,

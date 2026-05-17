@@ -160,6 +160,7 @@ async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
 
     while let Some(msg) = subscriber.next().await {
         if let Ok(log) = serde_json::from_slice::<LogLine>(&msg.payload) {
+            nats.buffer_log_line(log.deployment_id, &log.line).await;
             let sender = nats.get_log_sender(log.deployment_id).await;
             let _ = sender.send(log);
         }
@@ -198,12 +199,10 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             crate::models::DeploymentState::Ready => {
                 sqlx::query(
                     "UPDATE deployments SET state = 'ready', build_finished_at = $1, \
-                     build_log = COALESCE(build_log, '') || $2, \
-                     artifact_key = COALESCE($3, artifact_key) \
-                     WHERE id = $4 AND state IN ('queued', 'building', 'uploading', 'ready')",
+                     artifact_key = COALESCE($2, artifact_key) \
+                     WHERE id = $3 AND state IN ('queued', 'building', 'uploading', 'ready')",
                 )
                 .bind(now)
-                .bind(result.log_output.as_deref().unwrap_or(""))
                 .bind(result.artifact_key.as_deref())
                 .bind(result.deployment_id)
                 .execute(&*db)
@@ -211,12 +210,10 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             }
             crate::models::DeploymentState::Error => {
                 sqlx::query(
-                    "UPDATE deployments SET state = 'error', build_finished_at = $1, \
-                     build_log = COALESCE(build_log, '') || $2 \
-                     WHERE id = $3 AND state IN ('queued', 'building', 'uploading', 'error')",
+                    "UPDATE deployments SET state = 'error', build_finished_at = $1 \
+                     WHERE id = $2 AND state IN ('queued', 'building', 'uploading', 'error')",
                 )
                 .bind(now)
-                .bind(result.error_message.as_deref().unwrap_or("unknown error"))
                 .bind(result.deployment_id)
                 .execute(&*db)
                 .await
@@ -231,13 +228,20 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
                 .execute(&*db)
                 .await
             }
+            crate::models::DeploymentState::Building => {
+                sqlx::query(
+                    "UPDATE deployments SET state = 'building', build_started_at = NOW() \
+                     WHERE id = $1 AND state IN ('queued', 'building')",
+                )
+                .bind(result.deployment_id)
+                .execute(&*db)
+                .await
+            }
             crate::models::DeploymentState::Uploading => {
                 sqlx::query(
-                    "UPDATE deployments SET state = 'uploading', \
-                     build_log = COALESCE(build_log, '') || $1 \
-                     WHERE id = $2 AND state IN ('queued', 'building', 'uploading')",
+                    "UPDATE deployments SET state = 'uploading' \
+                     WHERE id = $1 AND state IN ('queued', 'building', 'uploading')",
                 )
-                .bind(result.log_output.as_deref().unwrap_or(""))
                 .bind(result.deployment_id)
                 .execute(&*db)
                 .await
@@ -249,9 +253,26 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             tracing::error!(error = %e, "failed to update deployment state");
         }
 
-        // Close the broadcast channel so all SSE subscribers receive RecvError::Closed
-        // and can emit a `done` event to the browser.
+        // Flush buffered logs to the DB and close the SSE broadcast channel.
         if is_terminal {
+            // Give any in-flight NATS log messages a moment to arrive and be buffered
+            // before we take the buffer (logs and results are on different channels).
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+            let buffered_log = nats.take_log_buffer(result.deployment_id).await;
+            if !buffered_log.is_empty() {
+                if let Err(e) = sqlx::query(
+                    "UPDATE deployments SET build_log = $1 WHERE id = $2",
+                )
+                .bind(&buffered_log)
+                .bind(result.deployment_id)
+                .execute(&*db)
+                .await
+                {
+                    tracing::error!(error = %e, "failed to persist build log");
+                }
+            }
+
             nats.close_log_sender(result.deployment_id).await;
         }
     }
