@@ -5,7 +5,8 @@ use uuid::Uuid;
 use crate::{
     AppState,
     errors::{AppError, AppResult, NotFoundExt},
-    models::{BuildCallbackRequest, BuildJob, CreateDeploymentRequest, Deployment, DeploymentState},
+    models::{BuildCallbackRequest, BuildJob, CreateDeploymentRequest, Deployment, DeploymentState, EnvVarTarget},
+    services::projects as project_service,
 };
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Deployment>> {
@@ -93,6 +94,14 @@ pub async fn create(
     .fetch_one(&*state.db)
     .await?;
 
+    // Fetch env vars for this project (build + all targets)
+    let env_var_entries = project_service::get_env_vars(state, user_id, project_id).await?;
+    let env_vars: HashMap<String, String> = env_var_entries
+        .into_iter()
+        .filter(|e| matches!(e.target, EnvVarTarget::Build | EnvVarTarget::All))
+        .map(|e| (e.key, e.value))
+        .collect();
+
     // Dispatch build job via NATS JetStream
     let git_url = if let Some(ref repo) = github_repo {
         format!("https://github.com/{}.git", repo)
@@ -109,7 +118,7 @@ pub async fn create(
         build_command: project.try_get("build_command").ok().flatten(),
         output_dir: project.try_get("output_dir").ok().flatten(),
         github_token: None,
-        env_vars: HashMap::new(),
+        env_vars,
     };
 
     state.nats.publish_job(&build_job).await?;
@@ -118,6 +127,7 @@ pub async fn create(
         deployment_id = %deployment.id,
         commit = %req.commit_sha,
         repo = ?github_repo,
+        env_var_count = build_job.env_vars.len(),
         "build job published to NATS"
     );
 

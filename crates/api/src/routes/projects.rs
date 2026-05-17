@@ -8,7 +8,7 @@ use crate::{
     AppState,
     errors::{AppError, AppResult},
     middleware::auth::AuthUser,
-    models::{CreateProjectRequest, UpdateProjectRequest},
+    models::{CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, UpdateEnvVarsRequest, UpdateProjectRequest},
     services::projects as project_service,
 };
 
@@ -58,19 +58,46 @@ pub async fn delete(
 }
 
 pub async fn get_env(
-    State(_state): State<AppState>,
-    AuthUser(_user): AuthUser,
-    Path(_id): Path<Uuid>,
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
-    Err(AppError::BadRequest("not yet implemented".into()))
+    let env_vars = project_service::get_env_vars(&state, user.id, id).await?;
+    Ok(Json(serde_json::to_value(env_vars).unwrap()))
 }
 
 pub async fn set_env(
-    State(_state): State<AppState>,
-    AuthUser(_user): AuthUser,
-    Path(_id): Path<Uuid>,
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<UpdateEnvVarsRequest>,
 ) -> AppResult<Json<Value>> {
-    Err(AppError::BadRequest("not yet implemented".into()))
+    let env_vars = project_service::update_env_vars(&state, user.id, id, body.env_vars).await?;
+    Ok(Json(serde_json::to_value(env_vars).unwrap()))
+}
+
+pub async fn add_env(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<CreateEnvVarRequest>,
+) -> AppResult<Json<Value>> {
+    let entry = EnvVarEntry {
+        key: body.key,
+        value: body.value,
+        target: body.target.unwrap_or(EnvVarTarget::All),
+    };
+    let env_vars = project_service::add_env_var(&state, user.id, id, entry).await?;
+    Ok(Json(serde_json::to_value(env_vars).unwrap()))
+}
+
+pub async fn delete_env(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path((id, key)): Path<(Uuid, String)>,
+) -> AppResult<Json<Value>> {
+    let env_vars = project_service::delete_env_var(&state, user.id, id, &key).await?;
+    Ok(Json(serde_json::to_value(env_vars).unwrap()))
 }
 
 pub async fn link_github(

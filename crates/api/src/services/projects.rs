@@ -2,7 +2,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     errors::{AppResult, NotFoundExt},
-    models::{CreateProjectRequest, Project, UpdateProjectRequest},
+    models::{CreateProjectRequest, EnvVarEntry, EnvVarTarget, Project, UpdateProjectRequest},
 };
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Project>> {
@@ -27,7 +27,7 @@ pub async fn create(
         INSERT INTO projects
             (owner_id, name, slug, github_repo, framework,
              build_command, output_dir, env_vars)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, '{}')
+        VALUES ($1, $2, $3, $4, $5, $6, $7, '[]')
         RETURNING *
         "#
     )
@@ -106,6 +106,111 @@ pub async fn delete(state: &AppState, user_id: Uuid, project_id: Uuid) -> AppRes
         return Err(crate::errors::AppError::NotFound("project not found".into()));
     }
     Ok(())
+}
+
+pub async fn get_env_vars(
+    state: &AppState,
+    user_id: Uuid,
+    project_id: Uuid,
+) -> AppResult<Vec<EnvVarEntry>> {
+    let project = get_for_user(state, user_id, project_id).await?;
+
+    let env_vars: Vec<EnvVarEntry> = serde_json::from_value(project.env_vars)
+        .unwrap_or_default();
+
+    Ok(env_vars)
+}
+
+pub async fn update_env_vars(
+    state: &AppState,
+    user_id: Uuid,
+    project_id: Uuid,
+    env_vars: Vec<EnvVarEntry>,
+) -> AppResult<Vec<EnvVarEntry>> {
+    let project = get_for_user(state, user_id, project_id).await?;
+
+    let json = serde_json::to_value(&env_vars)
+        .map_err(|e| crate::errors::AppError::Internal(e.into()))?;
+
+    sqlx::query(
+        "UPDATE projects SET env_vars = $1, updated_at = NOW() WHERE id = $2 AND owner_id = $3",
+    )
+    .bind(json)
+    .bind(project_id)
+    .bind(user_id)
+    .execute(&*state.db)
+    .await?;
+
+    Ok(env_vars)
+}
+
+pub async fn add_env_var(
+    state: &AppState,
+    user_id: Uuid,
+    project_id: Uuid,
+    new_var: EnvVarEntry,
+) -> AppResult<Vec<EnvVarEntry>> {
+    let project = get_for_user(state, user_id, project_id).await?;
+
+    let mut env_vars: Vec<EnvVarEntry> = serde_json::from_value(project.env_vars)
+        .unwrap_or_default();
+
+    // Update existing key or append new one
+    if let Some(existing) = env_vars.iter_mut().find(|v| v.key == new_var.key) {
+        existing.value = new_var.value;
+        existing.target = new_var.target;
+    } else {
+        env_vars.push(new_var);
+    }
+
+    let json = serde_json::to_value(&env_vars)
+        .map_err(|e| crate::errors::AppError::Internal(e.into()))?;
+
+    sqlx::query(
+        "UPDATE projects SET env_vars = $1, updated_at = NOW() WHERE id = $2 AND owner_id = $3",
+    )
+    .bind(json)
+    .bind(project_id)
+    .bind(user_id)
+    .execute(&*state.db)
+    .await?;
+
+    Ok(env_vars)
+}
+
+pub async fn delete_env_var(
+    state: &AppState,
+    user_id: Uuid,
+    project_id: Uuid,
+    key: &str,
+) -> AppResult<Vec<EnvVarEntry>> {
+    let project = get_for_user(state, user_id, project_id).await?;
+
+    let mut env_vars: Vec<EnvVarEntry> = serde_json::from_value(project.env_vars)
+        .unwrap_or_default();
+
+    let initial_len = env_vars.len();
+    env_vars.retain(|v| v.key != key);
+
+    if env_vars.len() == initial_len {
+        return Err(crate::errors::AppError::NotFound(
+            format!("env var '{}' not found", key),
+        ));
+    }
+
+    let json = serde_json::to_value(&env_vars)
+        .map_err(|e| crate::errors::AppError::Internal(e.into()))?;
+
+    sqlx::query(
+        "UPDATE projects SET env_vars = $1, updated_at = NOW() WHERE id = $2 AND owner_id = $3",
+    )
+    .bind(json)
+    .bind(project_id)
+    .bind(user_id)
+    .execute(&*state.db)
+    .await?;
+
+    Ok(env_vars)
 }
 
 fn slugify(name: &str) -> String {

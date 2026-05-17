@@ -21,7 +21,8 @@ pub fn router(state: AppState) -> Router {
 
         .route("/v1/projects",           get(projects::list).post(projects::create))
         .route("/v1/projects/{id}",       get(projects::get).patch(projects::update).delete(projects::delete))
-        .route("/v1/projects/{id}/env",   get(projects::get_env).put(projects::set_env))
+        .route("/v1/projects/{id}/env",   get(projects::get_env).put(projects::set_env).post(projects::add_env))
+        .route("/v1/projects/{id}/env/{key}",  delete(projects::delete_env))
         .route("/v1/projects/{id}/link",  post(projects::link_github))
 
         .route("/v1/deployments",                get(deployments::list))

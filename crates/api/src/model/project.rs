@@ -21,6 +21,33 @@ pub struct Project {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvVarEntry {
+    pub key: String,
+    pub value: String,
+    pub target: EnvVarTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum EnvVarTarget {
+    Build,
+    Runtime,
+    All,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateEnvVarRequest {
+    pub key: String,
+    pub value: String,
+    pub target: Option<EnvVarTarget>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateEnvVarsRequest {
+    pub env_vars: Vec<EnvVarEntry>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateProjectRequest {
     pub name: String,
