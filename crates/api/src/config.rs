@@ -53,6 +53,11 @@ pub struct AppConfig {
 
     #[serde(default = "default_serve_network")]
     pub serve_network: String,
+
+    /// Use websecure (HTTPS) Traefik entrypoint for serve containers.
+    /// Set to false for local development.
+    #[serde(default = "default_serve_tls")]
+    pub serve_tls: bool,
 }
 
 impl AppConfig {
@@ -104,4 +109,7 @@ fn default_docker_network() -> String {
 }
 fn default_serve_network() -> String {
     "vercel-clone_serve-net".into()
+}
+fn default_serve_tls() -> bool {
+    true
 }

@@ -90,6 +90,7 @@ async fn main() -> anyhow::Result<()> {
             PathBuf::from("/tmp/vercel-clone-deployments"),
             config.serve_network.clone(),
             300,
+            config.serve_tls,
         )),
     };
 

@@ -12,6 +12,7 @@ pub struct DeploymentServers {
     work_dir: PathBuf,
     docker_network: String,
     idle_timeout_secs: u64,
+    serve_tls: bool,
 }
 
 struct RunningContainer {
@@ -20,12 +21,13 @@ struct RunningContainer {
 }
 
 impl DeploymentServers {
-    pub fn new(work_dir: PathBuf, docker_network: String, idle_timeout_secs: u64) -> Self {
+    pub fn new(work_dir: PathBuf, docker_network: String, idle_timeout_secs: u64, serve_tls: bool) -> Self {
         Self {
             containers: Arc::new(Mutex::new(HashMap::new())),
             work_dir,
             docker_network,
             idle_timeout_secs,
+            serve_tls,
         }
     }
 
@@ -50,34 +52,39 @@ impl DeploymentServers {
             .await;
 
         let router_name = format!("serve-{}", deployment_id.simple());
+        let entrypoint = if self.serve_tls { "websecure" } else { "web" };
+        let mut docker_args = vec![
+            "run".to_string(),
+            "-d".to_string(),
+            "--name".to_string(), container_name.clone(),
+            "--network".to_string(), self.docker_network.clone(),
+            "--cpus".to_string(), "0.5".to_string(),
+            "--memory".to_string(), "512m".to_string(),
+            "--pids-limit".to_string(), "512".to_string(),
+            "--cap-drop".to_string(), "ALL".to_string(),
+            "--security-opt".to_string(), "no-new-privileges".to_string(),
+            "-e".to_string(), "PORT=3000".to_string(),
+            "-l".to_string(), "traefik.enable=true".to_string(),
+            "-l".to_string(), format!("traefik.docker.network={}", self.docker_network),
+            "-l".to_string(), format!("traefik.http.routers.{}.rule=Host(`{}`)", router_name, host),
+            "-l".to_string(), format!("traefik.http.routers.{}.entrypoints={}", router_name, entrypoint),
+        ];
+        if self.serve_tls {
+            docker_args.extend([
+                "-l".to_string(),
+                format!("traefik.http.routers.{}.tls.certresolver=letsencrypt", router_name),
+            ]);
+        }
+        docker_args.extend([
+            "-l".to_string(), format!("traefik.http.services.{}.loadbalancer.server.port=3000", router_name),
+            image_ref.to_string(),
+        ]);
         let status = tokio::process::Command::new("docker")
-            .args([
-                "run",
-                "-d",
-                "--name",
-                &container_name,
-                "--network",
-                &self.docker_network,
-                "--cpus",
-                "0.5",
-                "--memory",
-                "512m",
-                "--pids-limit",
-                "512",
-                "--cap-drop",
-                "ALL",
-                "--security-opt",
-                "no-new-privileges",
-                "-e",
-                "PORT=3000",
-                "-l",
-                "traefik.enable=true",
-                "-l",
-                &format!("traefik.docker.network={}", self.docker_network),
-                "-l",
-                &format!("traefik.http.routers.{}.rule=Host(`{}`)", router_name, host),
-                "-l",
-                &format!("traefik.http.routers.{}.entrypoints=websecure", router_name),
+            .args(&docker_args)
+            .status()
+            .await?;
+        // (replaced inline args block below — see docker_args above)
+        let _ = (
                 "-l",
                 &format!("traefik.http.routers.{}.tls.certresolver=letsencrypt", router_name),
                 "-l",

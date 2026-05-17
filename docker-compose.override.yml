@@ -1,0 +1,47 @@
+# Local development overrides.
+# Docker Compose automatically merges this with docker-compose.yml.
+# Do NOT commit secrets into this file.
+
+services:
+  traefik:
+    command:
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=vercel-clone_default
+      - --entrypoints.web.address=:80
+      - --log.level=INFO
+    # ports merges (can't remove 443 from main file), but Traefik won't bind it
+    # since --entrypoints.websecure is not in the command above.
+
+  api:
+    environment:
+      SERVE_TLS: "false"
+    labels:
+      # Override the websecure router to use plain HTTP
+      - "traefik.enable=true"
+      - "traefik.docker.network=vercel-clone_default"
+      - "traefik.http.services.api.loadbalancer.server.port=8080"
+      - "traefik.http.routers.api.rule=Host(`api.localhost`)"
+      - "traefik.http.routers.api.entrypoints=web"
+      - "traefik.http.routers.api.service=api"
+      - "traefik.http.routers.api.priority=30"
+
+  # One-shot container that creates the MinIO bucket before the API starts.
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} &&
+        mc mb --ignore-existing local/deployments &&
+        echo 'bucket ready'
+      "
+    env_file:
+      - .env
+    networks:
+      - default
+    restart: "no"
