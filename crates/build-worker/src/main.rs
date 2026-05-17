@@ -6,6 +6,7 @@ mod storage;
 
 use futures::StreamExt;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::models::{BuildResult, DeploymentState, LogLine};
 
@@ -39,12 +40,14 @@ async fn main() -> anyhow::Result<()> {
     let work_base = PathBuf::from("/tmp/builds");
     tokio::fs::create_dir_all(&work_base).await?;
 
-    tracing::info!("subscribing to build jobs");
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_builds));
+    tracing::info!(max_concurrent = config.max_concurrent_builds, "subscribing to build jobs");
 
     let jobs = nats.subscribe_jobs().await?;
     tokio::pin!(jobs);
 
     while let Some(job) = jobs.next().await {
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
         let nats = nats.clone();
         let storage = storage.clone();
         let work_base = work_base.clone();
@@ -52,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
         let build_timeout_secs = config.build_timeout_secs;
 
         tokio::spawn(async move {
+            let _permit = permit;
             let deployment_id = job.deployment_id;
             tracing::info!(
                 %deployment_id,

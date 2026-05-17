@@ -111,7 +111,6 @@ services:
     build:
       context: .
       dockerfile: crates/build-worker/Dockerfile
-    container_name: vercel-clone-worker
     restart: unless-stopped
     depends_on:
       nats:
@@ -130,6 +129,7 @@ services:
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: deployments
       DOCKER_NETWORK: vercel-clone_default
+      MAX_CONCURRENT_BUILDS: 2
 
 volumes:
   pgdata:

@@ -19,6 +19,9 @@ pub struct WorkerConfig {
 
     #[serde(default = "default_build_timeout_secs")]
     pub build_timeout_secs: u64,
+
+    #[serde(default = "default_max_concurrent_builds")]
+    pub max_concurrent_builds: usize,
 }
 
 impl WorkerConfig {
@@ -46,4 +49,7 @@ fn default_docker_network() -> String {
 }
 fn default_build_timeout_secs() -> u64 {
     600
+}
+fn default_max_concurrent_builds() -> usize {
+    2
 }
