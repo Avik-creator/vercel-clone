@@ -4525,6 +4525,8 @@ dependencies = [
  "argon2",
  "async-nats",
  "async-stream",
+ "aws-config",
+ "aws-sdk-s3",
  "axum",
  "axum-extra",
  "chrono",

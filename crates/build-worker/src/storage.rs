@@ -5,6 +5,7 @@ use walkdir::WalkDir;
 use crate::models::LogLine;
 use crate::nats::WorkerNats;
 
+#[derive(Clone)]
 pub struct Storage {
     client: aws_sdk_s3::Client,
     bucket: String,
@@ -66,6 +67,7 @@ impl Storage {
                 .put_object()
                 .bucket(&self.bucket)
                 .key(&key)
+                .content_type(content_type_for(path))
                 .body(stream)
                 .send()
                 .await?;
@@ -79,5 +81,28 @@ impl Storage {
         }
 
         Ok(prefix)
+    }
+}
+
+fn content_type_for(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("html") | Some("htm") => "text/html; charset=utf-8",
+        Some("css") => "text/css",
+        Some("js") | Some("mjs") | Some("cjs") => "application/javascript",
+        Some("json") => "application/json",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("gif") => "image/gif",
+        Some("svg") => "image/svg+xml",
+        Some("ico") => "image/x-icon",
+        Some("webp") => "image/webp",
+        Some("woff") => "font/woff",
+        Some("woff2") => "font/woff2",
+        Some("ttf") => "font/ttf",
+        Some("txt") => "text/plain; charset=utf-8",
+        Some("xml") => "application/xml",
+        Some("webmanifest") => "application/manifest+json",
+        Some("map") => "application/json",
+        _ => "application/octet-stream",
     }
 }

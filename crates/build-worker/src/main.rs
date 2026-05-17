@@ -45,73 +45,81 @@ async fn main() -> anyhow::Result<()> {
     tokio::pin!(jobs);
 
     while let Some(job) = jobs.next().await {
-        let deployment_id = job.deployment_id;
-        tracing::info!(
-            %deployment_id,
-            branch = %job.branch,
-            commit = %job.commit_sha,
-            "processing build job"
-        );
+        let nats = nats.clone();
+        let storage = storage.clone();
+        let work_base = work_base.clone();
+        let docker_network = config.docker_network.clone();
+        let build_timeout_secs = config.build_timeout_secs;
 
-        let log = LogLine {
-            deployment_id,
-            line: "build started".to_string(),
-            timestamp: chrono::Utc::now(),
-        };
-        let _ = nats.publish_log(&log).await;
+        tokio::spawn(async move {
+            let deployment_id = job.deployment_id;
+            tracing::info!(
+                %deployment_id,
+                branch = %job.branch,
+                commit = %job.commit_sha,
+                "processing build job"
+            );
 
-        let result = match process_job(
-            &job,
-            &nats,
-            &storage,
-            &work_base,
-            &config.docker_network,
-            config.build_timeout_secs,
-        )
-        .await
-        {
-            Ok(artifact_key) => {
-                tracing::info!(%deployment_id, "build succeeded");
-                BuildResult {
+            let _ = nats
+                .publish_log(&LogLine {
                     deployment_id,
-                    state: DeploymentState::Ready,
-                    artifact_key: Some(artifact_key),
-                    log_output: None,
-                    error_message: None,
-                }
-            }
-            Err(e) => {
-                tracing::error!(%deployment_id, error = %e, "build failed");
-                let _ = nats
-                    .publish_log(&LogLine {
+                    line: "build started".to_string(),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+
+            let result = match process_job(
+                &job,
+                &nats,
+                &storage,
+                &work_base,
+                &docker_network,
+                build_timeout_secs,
+            )
+            .await
+            {
+                Ok(artifact_key) => {
+                    tracing::info!(%deployment_id, "build succeeded");
+                    BuildResult {
                         deployment_id,
-                        line: format!("error: {}", e),
-                        timestamp: chrono::Utc::now(),
-                    })
-                    .await;
-                BuildResult {
-                    deployment_id,
-                    state: DeploymentState::Error,
-                    artifact_key: None,
-                    log_output: None,
-                    error_message: Some(e.to_string()),
+                        state: DeploymentState::Ready,
+                        artifact_key: Some(artifact_key),
+                        log_output: None,
+                        error_message: None,
+                    }
                 }
+                Err(e) => {
+                    tracing::error!(%deployment_id, error = %e, "build failed");
+                    let _ = nats
+                        .publish_log(&LogLine {
+                            deployment_id,
+                            line: format!("error: {}", e),
+                            timestamp: chrono::Utc::now(),
+                        })
+                        .await;
+                    BuildResult {
+                        deployment_id,
+                        state: DeploymentState::Error,
+                        artifact_key: None,
+                        log_output: None,
+                        error_message: Some(e.to_string()),
+                    }
+                }
+            };
+
+            if let Err(e) = nats.publish_result(&result).await {
+                tracing::error!(%deployment_id, error = %e, "failed to publish build result");
             }
-        };
 
-        if let Err(e) = nats.publish_result(&result).await {
-            tracing::error!(%deployment_id, error = %e, "failed to publish build result");
-        }
+            let work_dir = work_base.join(deployment_id.to_string());
+            let _ = tokio::fs::remove_dir_all(&work_dir).await;
 
-        let work_dir = work_base.join(deployment_id.to_string());
-        let _ = tokio::fs::remove_dir_all(&work_dir).await;
-
-        // Cleanup build container if still present
-        let container_name = format!("build-{}", deployment_id);
-        let _ = tokio::process::Command::new("docker")
-            .args(["rm", "-f", &container_name])
-            .output()
-            .await;
+            let container_name = format!("build-{}", deployment_id);
+            let _ = tokio::process::Command::new("docker")
+                .args(["rm", "-f", &container_name])
+                .output()
+                .await;
+        });
     }
 
     Ok(())
@@ -150,10 +158,12 @@ async fn process_job(
     let local_output = work_dir.join("output");
     tokio::fs::create_dir_all(&local_output).await?;
 
+    // Append /. so docker cp copies the *contents* of output_dir into local_output,
+    // not the directory itself (which would create an extra nesting level).
     let status = tokio::process::Command::new("docker")
         .args([
             "cp",
-            &format!("{}:/app/repo/{}", container_name, output_dir),
+            &format!("{}:/app/repo/{}/.", container_name, output_dir),
             local_output.to_str().unwrap(),
         ])
         .status()

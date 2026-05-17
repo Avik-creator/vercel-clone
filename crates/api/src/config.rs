@@ -37,6 +37,12 @@ pub struct AppConfig {
     #[serde(default = "default_minio_bucket")]
     pub minio_bucket: String,
 
+    #[serde(default = "default_minio_access_key")]
+    pub minio_access_key: String,
+
+    #[serde(default = "default_minio_secret_key")]
+    pub minio_secret_key: String,
+
     /// Frontend URL for OAuth redirects
     #[serde(default = "default_frontend_url")]
     pub frontend_url: String,
@@ -76,6 +82,12 @@ fn default_minio_endpoint() -> String {
 }
 fn default_minio_bucket() -> String {
     "deployments".into()
+}
+fn default_minio_access_key() -> String {
+    "minioadmin".into()
+}
+fn default_minio_secret_key() -> String {
+    "minioadmin".into()
 }
 fn default_frontend_url() -> String {
     "http://localhost:3000".into()

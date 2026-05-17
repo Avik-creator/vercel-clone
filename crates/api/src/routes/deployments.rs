@@ -9,7 +9,7 @@ use axum::{
     Json,
     body::Body,
     extract::{Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, header},
     response::Response,
     response::sse::{Event, Sse},
 };
@@ -137,34 +137,48 @@ pub async fn serve_artifact(
     .ok_or_else(|| AppError::NotFound("deployment not found".into()))?;
 
     let object_key = deploy_service::artifact_object_key(&artifact_key, uri.path());
-    let minio_url = format!(
-        "{}/{}/{}",
-        state.config.minio_endpoint.trim_end_matches('/'),
-        state.config.minio_bucket,
-        object_key
-    );
 
-    let object = reqwest::get(minio_url)
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to fetch artifact: {}", e)))?;
+    let s3_result = state
+        .storage
+        .get_object()
+        .bucket(&state.config.minio_bucket)
+        .key(&object_key)
+        .send()
+        .await;
 
-    if object.status() == StatusCode::NOT_FOUND {
-        return Err(AppError::NotFound("artifact not found".into()));
-    }
+    let object = match s3_result {
+        Ok(o) => o,
+        Err(e) => {
+            let is_not_found = e
+                .as_service_error()
+                .map(|se| se.is_no_such_key())
+                .unwrap_or(false);
+            if is_not_found {
+                return Err(AppError::NotFound("artifact not found".into()));
+            }
+            return Err(AppError::Internal(anyhow::anyhow!(
+                "failed to fetch artifact: {}",
+                e
+            )));
+        }
+    };
 
-    let status = object.status();
-    let content_type = object.headers().get(header::CONTENT_TYPE).cloned();
+    let content_type = object
+        .content_type()
+        .map(|ct| ct.parse::<header::HeaderValue>())
+        .transpose()
+        .unwrap_or(None);
+
     let bytes = object
-        .bytes()
+        .body
+        .collect()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to read artifact: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to read artifact body: {}", e)))?
+        .into_bytes();
 
     let mut response = Response::new(Body::from(bytes));
-    *response.status_mut() = status;
-    if let Some(content_type) = content_type {
-        response
-            .headers_mut()
-            .insert(header::CONTENT_TYPE, content_type);
+    if let Some(ct) = content_type {
+        response.headers_mut().insert(header::CONTENT_TYPE, ct);
     }
 
     Ok(response)

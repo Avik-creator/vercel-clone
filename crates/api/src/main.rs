@@ -25,7 +25,7 @@ mod services;
 use crate::{
     config::AppConfig,
     db::Database,
-    model::build_job::{BuildResult, LogLine},
+    model::build_job::LogLine,
     services::nats::NatsClient,
 };
 
@@ -34,6 +34,7 @@ pub struct AppState {
     pub db: Database,
     pub config: Arc<AppConfig>,
     pub nats: NatsClient,
+    pub storage: aws_sdk_s3::Client,
 }
 
 #[tokio::main]
@@ -57,10 +58,30 @@ async fn main() -> anyhow::Result<()> {
     let nats = NatsClient::connect(&config).await?;
     tracing::info!(url = %config.nats_url, "nats connected");
 
+    let storage = {
+        let credentials = aws_sdk_s3::config::Credentials::new(
+            &config.minio_access_key,
+            &config.minio_secret_key,
+            None,
+            None,
+            "api",
+        );
+        let s3_config = aws_sdk_s3::config::Builder::new()
+            .endpoint_url(&config.minio_endpoint)
+            .credentials_provider(credentials)
+            .region(aws_sdk_s3::config::Region::new("us-east-1"))
+            .force_path_style(true)
+            .behavior_version_latest()
+            .build();
+        aws_sdk_s3::Client::from_conf(s3_config)
+    };
+    tracing::info!(endpoint = %config.minio_endpoint, "minio client initialized");
+
     let state = AppState {
         db,
         config: config.clone(),
         nats,
+        storage,
     };
 
     let nats_for_logs = state.nats.clone();
@@ -133,68 +154,74 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
     use futures::StreamExt;
 
     let mut subscriber = nats
-        .client
-        .subscribe("build.results.>")
+        .subscribe_results()
         .await
-        .map_err(|e| anyhow::anyhow!("failed to subscribe to build.results.>: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("failed to subscribe to build results: {}", e))?;
 
-    tracing::info!("subscribed to build results");
+    tracing::info!("subscribed to build results (JetStream)");
 
-    while let Some(msg) = subscriber.next().await {
-        if let Ok(result) = serde_json::from_slice::<BuildResult>(&msg.payload) {
-            tracing::info!(
-                deployment_id = %result.deployment_id,
-                state = ?result.state,
-                "received build result"
-            );
+    tokio::pin!(subscriber);
+    while let Some(result) = subscriber.next().await {
+        tracing::info!(
+            deployment_id = %result.deployment_id,
+            state = ?result.state,
+            "received build result"
+        );
 
-            let now = chrono::Utc::now();
-            let update_result = match result.state {
-                crate::models::DeploymentState::Ready => {
-                    sqlx::query(
-                        "UPDATE deployments SET state = 'ready', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2, artifact_key = COALESCE($3, artifact_key) WHERE id = $4 AND state IN ('queued', 'building', 'uploading', 'ready')",
-                    )
-                    .bind(now)
-                    .bind(result.log_output.as_deref().unwrap_or(""))
-                    .bind(result.artifact_key.as_deref())
-                    .bind(result.deployment_id)
-                    .execute(&*db)
-                    .await
-                }
-                crate::models::DeploymentState::Error => {
-                    sqlx::query(
-                        "UPDATE deployments SET state = 'error', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2 WHERE id = $3 AND state IN ('queued', 'building', 'uploading', 'error')",
-                    )
-                    .bind(now)
-                    .bind(result.error_message.as_deref().unwrap_or("unknown error"))
-                    .bind(result.deployment_id)
-                    .execute(&*db)
-                    .await
-                }
-                crate::models::DeploymentState::Cancelled => {
-                    sqlx::query(
-                        "UPDATE deployments SET state = 'cancelled', build_finished_at = $1 WHERE id = $2 AND state IN ('queued', 'building', 'uploading', 'cancelled')",
-                    )
-                    .bind(now)
-                    .bind(result.deployment_id)
-                    .execute(&*db)
-                    .await
-                }
-                crate::models::DeploymentState::Uploading => {
-                    sqlx::query(
-                        "UPDATE deployments SET state = 'uploading', build_log = COALESCE(build_log, '') || $1 WHERE id = $2 AND state IN ('queued', 'building', 'uploading')",
-                    )
-                    .bind(result.log_output.as_deref().unwrap_or(""))
-                    .bind(result.deployment_id)
-                    .execute(&*db)
-                    .await
-                }
-                _ => continue,
-            };
-
-            if let Err(e) = update_result {
-                tracing::error!(error = %e, "failed to update deployment state");
+        let now = chrono::Utc::now();
+        let db_result = match result.state {
+            crate::models::DeploymentState::Ready => {
+                sqlx::query(
+                    "UPDATE deployments SET state = 'ready', build_finished_at = $1, \
+                     build_log = COALESCE(build_log, '') || $2, \
+                     artifact_key = COALESCE($3, artifact_key) \
+                     WHERE id = $4 AND state IN ('queued', 'building', 'uploading', 'ready')",
+                )
+                .bind(now)
+                .bind(result.log_output.as_deref().unwrap_or(""))
+                .bind(result.artifact_key.as_deref())
+                .bind(result.deployment_id)
+                .execute(&*db)
+                .await
             }
+            crate::models::DeploymentState::Error => {
+                sqlx::query(
+                    "UPDATE deployments SET state = 'error', build_finished_at = $1, \
+                     build_log = COALESCE(build_log, '') || $2 \
+                     WHERE id = $3 AND state IN ('queued', 'building', 'uploading', 'error')",
+                )
+                .bind(now)
+                .bind(result.error_message.as_deref().unwrap_or("unknown error"))
+                .bind(result.deployment_id)
+                .execute(&*db)
+                .await
+            }
+            crate::models::DeploymentState::Cancelled => {
+                sqlx::query(
+                    "UPDATE deployments SET state = 'cancelled', build_finished_at = $1 \
+                     WHERE id = $2 AND state IN ('queued', 'building', 'uploading', 'cancelled')",
+                )
+                .bind(now)
+                .bind(result.deployment_id)
+                .execute(&*db)
+                .await
+            }
+            crate::models::DeploymentState::Uploading => {
+                sqlx::query(
+                    "UPDATE deployments SET state = 'uploading', \
+                     build_log = COALESCE(build_log, '') || $1 \
+                     WHERE id = $2 AND state IN ('queued', 'building', 'uploading')",
+                )
+                .bind(result.log_output.as_deref().unwrap_or(""))
+                .bind(result.deployment_id)
+                .execute(&*db)
+                .await
+            }
+            _ => continue,
+        };
+
+        if let Err(e) = db_result {
+            tracing::error!(error = %e, "failed to update deployment state");
         }
     }
 

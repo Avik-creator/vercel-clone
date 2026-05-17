@@ -61,6 +61,51 @@ impl NatsClient {
         publish(&self.client, &subject, log).await
     }
 
+    pub async fn subscribe_results(
+        &self,
+    ) -> Result<impl futures::Stream<Item = crate::model::build_job::BuildResult>, AppError> {
+        use futures::StreamExt;
+
+        let stream = self
+            .context
+            .get_stream("build_results")
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("get build_results stream: {}", e)))?;
+
+        let consumer = stream
+            .create_consumer(async_nats::jetstream::consumer::pull::Config {
+                durable_name: Some("api-result-processor".to_string()),
+                filter_subject: "build.results.>".to_string(),
+                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+                ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+                max_deliver: 5,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("create result consumer: {}", e)))?;
+
+        let messages = consumer
+            .messages()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("open result stream: {}", e)))?;
+
+        let out = async_stream::stream! {
+            tokio::pin!(messages);
+            while let Some(msg) = messages.next().await {
+                if let Ok(msg) = msg {
+                    if let Ok(result) =
+                        serde_json::from_slice::<crate::model::build_job::BuildResult>(&msg.payload)
+                    {
+                        msg.ack().await.ok();
+                        yield result;
+                    }
+                }
+            }
+        };
+
+        Ok(out)
+    }
+
     pub async fn get_log_sender(&self, deployment_id: Uuid) -> broadcast::Sender<LogLine> {
         let mut broadcasts = self.log_broadcasts.lock().await;
         broadcasts
