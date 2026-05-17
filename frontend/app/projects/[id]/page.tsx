@@ -15,12 +15,12 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { 
   ArrowLeft, 
   ExternalLink, 
-  Github, 
   Settings, 
   GitBranch,
   Rocket,
   Clock
 } from "lucide-react"
+import { GitHubIcon } from "@/components/icons/github"
 import { formatRelativeTime } from "@/lib/utils"
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -85,7 +85,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mt-1"
                   >
-                    <Github className="h-4 w-4" />
+                    <GitHubIcon className="h-4 w-4" />
                     {project.github_repo}
                     <ExternalLink className="h-3 w-3" />
                   </a>

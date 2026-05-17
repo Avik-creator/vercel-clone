@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Shield, Github } from "lucide-react"
+import { Shield } from "lucide-react"
+import { GitHubIcon } from "@/components/icons/github"
 
 export default function SecurityPage() {
   const { isAuthenticated, isLoading: authLoading, user } = useAuth()
@@ -51,9 +52,10 @@ export default function SecurityPage() {
             </div>
           </CardHeader>
           <CardContent>
-            {user?.github_id && !user?.password_hash ? (
+            {/* If user signed up via GitHub, they may not have a password */}
+            {user?.github_id ? (
               <div className="text-sm text-muted-foreground">
-                You signed up with GitHub. To set a password, use the forgot password feature.
+                You signed up with GitHub. Password change is not available for GitHub accounts.
               </div>
             ) : (
               <form className="space-y-4">
@@ -84,7 +86,7 @@ export default function SecurityPage() {
           <CardHeader>
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                <Github className="h-5 w-5 text-foreground" />
+                <GitHubIcon className="h-5 w-5" />
               </div>
               <div>
                 <CardTitle>Connected Accounts</CardTitle>
@@ -95,7 +97,7 @@ export default function SecurityPage() {
           <CardContent>
             <div className="flex items-center justify-between p-4 border border-border rounded-lg">
               <div className="flex items-center gap-3">
-                <Github className="h-5 w-5" />
+                <GitHubIcon className="h-5 w-5" />
                 <div>
                   <p className="font-medium text-foreground">GitHub</p>
                   <p className="text-sm text-muted-foreground">

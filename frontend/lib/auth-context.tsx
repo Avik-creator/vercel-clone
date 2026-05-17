@@ -11,6 +11,7 @@ interface AuthContextType {
   register: (email: string, name: string, password: string) => Promise<void>
   logout: () => void
   setUser: (user: User) => void
+  refreshUser: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -19,23 +20,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
 
+  const refreshUser = useCallback(async () => {
+    const token = api.getToken()
+    if (!token) {
+      setUser(null)
+      setIsLoading(false)
+      return
+    }
+
+    try {
+      const userData = await api.getMe()
+      setUser(userData)
+      localStorage.setItem("auth_user", JSON.stringify(userData))
+    } catch {
+      // Token might be expired or invalid
+      api.logout()
+      setUser(null)
+      localStorage.removeItem("auth_user")
+    }
+    setIsLoading(false)
+  }, [])
+
   useEffect(() => {
     // Check if user is logged in
     const token = api.getToken()
     if (token) {
-      // We don't have a /me endpoint, so we'll just trust the token exists
-      // In production, you'd validate the token here
+      // First try to use cached user data for immediate display
       const storedUser = localStorage.getItem("auth_user")
       if (storedUser) {
         try {
           setUser(JSON.parse(storedUser))
         } catch {
-          api.logout()
+          // Invalid stored data, will refresh from API
         }
       }
+      // Then refresh from API to ensure data is current
+      refreshUser()
+    } else {
+      setIsLoading(false)
     }
-    setIsLoading(false)
-  }, [])
+  }, [refreshUser])
 
   const login = useCallback(async (email: string, password: string) => {
     const response = await api.login({ email, password })
@@ -65,6 +89,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         register,
         logout,
         setUser,
+        refreshUser,
       }}
     >
       {children}

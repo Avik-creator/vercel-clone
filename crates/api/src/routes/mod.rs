@@ -16,6 +16,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/auth/register",      post(auth::register))
         .route("/v1/auth/login",         post(auth::login))
         .route("/v1/auth/refresh",       post(auth::refresh))
+        .route("/v1/auth/me",            get(auth::me))
         .route("/v1/auth/github",        get(auth::github_oauth_redirect))
         .route("/v1/auth/github/callback", get(auth::github_oauth_callback))
 

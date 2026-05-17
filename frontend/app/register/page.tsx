@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Triangle, Github } from "lucide-react"
+import { Triangle } from "lucide-react"
+import { GitHubIcon } from "@/components/icons/github"
 
 export default function RegisterPage() {
   const [name, setName] = useState("")
@@ -124,7 +125,7 @@ export default function RegisterPage() {
             className="w-full gap-2"
             onClick={handleGitHubLogin}
           >
-            <Github className="h-4 w-4" />
+            <GitHubIcon className="h-4 w-4" />
             GitHub
           </Button>
         </CardContent>

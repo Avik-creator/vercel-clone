@@ -24,6 +24,12 @@ pub struct Claims {
     pub iat: i64,
 }
 
+// Query params for token (used by SSE endpoints)
+#[derive(Debug, Deserialize)]
+struct TokenQuery {
+    token: Option<String>,
+}
+
 pub struct AuthUser(pub User);
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -33,6 +39,7 @@ impl FromRequestParts<AppState> for AuthUser {
     req: &mut Parts,
     state: &AppState,
   ) -> Result<Self, Self::Rejection> {
+    // First try Authorization header
     if let Ok(TypedHeader(Authorization(bearer))) =
             req.extract::<TypedHeader<Authorization<Bearer>>>().await
         {
@@ -45,6 +52,16 @@ impl FromRequestParts<AppState> for AuthUser {
 
             return authenticate_jwt(token, state).await;
         }
+
+    // Fallback to query parameter (for SSE endpoints)
+    if let Ok(axum::extract::Query(query)) = req.extract::<axum::extract::Query<TokenQuery>>().await {
+        if let Some(token) = query.token {
+            if token.starts_with("cp_") {
+                return authenticate_api_key(&token, state).await;
+            }
+            return authenticate_jwt(&token, state).await;
+        }
+    }
 
     Err(AppError::Unauthorized("missing authorization header".into()))
   }

@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Triangle, ArrowRight, Github, Zap, Shield, Globe } from "lucide-react"
+import { Triangle, ArrowRight, Zap, Shield, Globe } from "lucide-react"
+import { GitHubIcon } from "@/components/icons/github"
 
 export default function HomePage() {
   const { isAuthenticated, isLoading } = useAuth()
@@ -68,7 +69,7 @@ export default function HomePage() {
                 </Link>
                 <Link href="/login">
                   <Button size="lg" variant="outline" className="gap-2">
-                    <Github className="h-4 w-4" />
+                    <GitHubIcon className="h-4 w-4" />
                     Continue with GitHub
                   </Button>
                 </Link>
@@ -101,7 +102,7 @@ export default function HomePage() {
                 </div>
                 <div className="rounded-xl border border-border bg-card p-6">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                    <Github className="h-5 w-5 text-foreground" />
+                    <GitHubIcon className="h-5 w-5" />
                   </div>
                   <h3 className="mt-4 text-lg font-semibold text-foreground">GitHub Integration</h3>
                   <p className="mt-2 text-sm text-muted-foreground">

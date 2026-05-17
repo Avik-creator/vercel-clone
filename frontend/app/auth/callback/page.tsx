@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAuth } from "@/lib/auth-context"
 import { api } from "@/lib/api"
@@ -9,19 +9,40 @@ export default function AuthCallbackPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { setUser } = useAuth()
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     const token = searchParams.get("token")
     
     if (token) {
       api.setToken(token)
-      // In a real app, you'd fetch user data here
-      // For now, we'll just redirect to dashboard
-      router.push("/dashboard")
+      // Fetch user data using the new /me endpoint
+      api.getMe()
+        .then((user) => {
+          setUser(user)
+          localStorage.setItem("auth_user", JSON.stringify(user))
+          router.push("/dashboard")
+        })
+        .catch((err) => {
+          console.error("Failed to fetch user:", err)
+          setError("Failed to complete sign in. Please try again.")
+          api.logout()
+          setTimeout(() => router.push("/login?error=oauth_failed"), 2000)
+        })
     } else {
       router.push("/login?error=oauth_failed")
     }
   }, [searchParams, router, setUser])
+
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="text-center">
+          <p className="text-destructive">{error}</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">

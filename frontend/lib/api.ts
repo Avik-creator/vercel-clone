@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"
 
 type RequestOptions = {
   method?: string
@@ -82,6 +82,10 @@ class ApiClient {
 
   getGitHubOAuthUrl() {
     return `${this.baseUrl}/v1/auth/github`
+  }
+
+  async getMe() {
+    return this.request<User>("/v1/auth/me")
   }
 
   logout() {
