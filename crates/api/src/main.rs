@@ -4,14 +4,14 @@ use axum::{
     Router,
     http::{Method, StatusCode},
 };
+use std::time::Duration;
 use tower_http::{
     cors::{Any, CorsLayer},
-    trace::TraceLayer,
-    request_id::{MakeRequestUuid, SetRequestIdLayer, PropagateRequestIdLayer},
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     timeout::TimeoutLayer,
+    trace::TraceLayer,
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use std::time::Duration;
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 mod config;
 mod db;
@@ -22,7 +22,12 @@ mod models;
 mod routes;
 mod services;
 
-use crate::{config::AppConfig, db::Database, model::build_job::{LogLine, BuildResult}, services::nats::NatsClient};
+use crate::{
+    config::AppConfig,
+    db::Database,
+    model::build_job::{BuildResult, LogLine},
+    services::nats::NatsClient,
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -52,7 +57,11 @@ async fn main() -> anyhow::Result<()> {
     let nats = NatsClient::connect(&config).await?;
     tracing::info!(url = %config.nats_url, "nats connected");
 
-    let state = AppState { db, config: config.clone(), nats };
+    let state = AppState {
+        db,
+        config: config.clone(),
+        nats,
+    };
 
     let nats_for_logs = state.nats.clone();
     tokio::spawn(async move {
@@ -71,12 +80,21 @@ async fn main() -> anyhow::Result<()> {
 
     let cors = CorsLayer::new()
         .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::PATCH,
+        ])
         .allow_headers(Any);
 
     let app = Router::new()
         .merge(routes::router(state.clone()))
-        .layer(TimeoutLayer::with_status_code(StatusCode::GATEWAY_TIMEOUT, Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::GATEWAY_TIMEOUT,
+            Duration::from_secs(30),
+        ))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .layer(PropagateRequestIdLayer::x_request_id())

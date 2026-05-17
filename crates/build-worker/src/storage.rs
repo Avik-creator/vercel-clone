@@ -1,5 +1,5 @@
-use std::path::Path;
 use aws_sdk_s3::primitives::ByteStream;
+use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::models::LogLine;
@@ -17,13 +17,8 @@ impl Storage {
         secret_key: &str,
         bucket: &str,
     ) -> anyhow::Result<Self> {
-        let credentials = aws_sdk_s3::config::Credentials::new(
-            access_key,
-            secret_key,
-            None,
-            None,
-            "worker",
-        );
+        let credentials =
+            aws_sdk_s3::config::Credentials::new(access_key, secret_key, None, None, "worker");
 
         let config = aws_sdk_s3::config::Builder::new()
             .endpoint_url(endpoint)
@@ -35,19 +30,10 @@ impl Storage {
 
         let client = aws_sdk_s3::Client::from_conf(config);
 
-        let exists = client
-            .head_bucket()
-            .bucket(bucket)
-            .send()
-            .await
-            .is_ok();
+        let exists = client.head_bucket().bucket(bucket).send().await.is_ok();
 
         if !exists {
-            client
-                .create_bucket()
-                .bucket(bucket)
-                .send()
-                .await?;
+            client.create_bucket().bucket(bucket).send().await?;
         }
 
         Ok(Self {

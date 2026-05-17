@@ -40,11 +40,8 @@ pub async fn clone_repo(job: &BuildJob, work_dir: &Path) -> anyhow::Result<()> {
             .revparse_ext(&commit_sha)
             .map_err(|e| anyhow::anyhow!("failed to resolve commit {}: {}", commit_sha, e))?;
 
-        repo.checkout_tree(
-            &commit,
-            Some(git2::build::CheckoutBuilder::new().force()),
-        )
-        .map_err(|e| anyhow::anyhow!("failed to checkout commit: {}", e))?;
+        repo.checkout_tree(&commit, Some(git2::build::CheckoutBuilder::new().force()))
+            .map_err(|e| anyhow::anyhow!("failed to checkout commit: {}", e))?;
 
         repo.set_head_detached(commit.id())
             .map_err(|e| anyhow::anyhow!("failed to set detached head: {}", e))?;

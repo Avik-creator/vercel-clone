@@ -1,5 +1,5 @@
-use std::process::Stdio;
 use std::future::Future;
+use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -19,7 +19,10 @@ pub async fn run_build(
     let is_node_runtime = node_image.starts_with("node:");
 
     let git_url = if let Some(ref token) = job.github_token {
-        job.git_url.replace("https://github.com/", &format!("https://x-access-token:{}@github.com/", token))
+        job.git_url.replace(
+            "https://github.com/",
+            &format!("https://x-access-token:{}@github.com/", token),
+        )
     } else {
         job.git_url.clone()
     };
@@ -30,9 +33,9 @@ pub async fn run_build(
         "npm run build".to_string()
     };
 
-        // Install git (and common native build deps) in both Alpine and Debian-based images.
-        // We suppress most output to keep logs readable; failures still surface with a non-zero exit.
-        let deps_cmd = r#"if command -v apk >/dev/null 2>&1; then \
+    // Install git (and common native build deps) in both Alpine and Debian-based images.
+    // We suppress most output to keep logs readable; failures still surface with a non-zero exit.
+    let deps_cmd = r#"if command -v apk >/dev/null 2>&1; then \
     apk add --no-cache git python3 make g++ ca-certificates > /dev/null; \
 elif command -v apt-get >/dev/null 2>&1; then \
     apt-get update -y > /dev/null && apt-get install -y git python3 make g++ ca-certificates > /dev/null; \
@@ -41,9 +44,9 @@ else \
     exit 127; \
 fi"#;
 
-        // For Node projects, install dependencies before running the build command.
-        // - Uses pnpm/yarn when lockfiles are present (via corepack), otherwise npm.
-        let node_install_cmd = r#"corepack enable > /dev/null 2>&1 || true; \
+    // For Node projects, install dependencies before running the build command.
+    // - Uses pnpm/yarn when lockfiles are present (via corepack), otherwise npm.
+    let node_install_cmd = r#"corepack enable > /dev/null 2>&1 || true; \
 if [ -f pnpm-lock.yaml ]; then \
     corepack prepare pnpm@latest --activate > /dev/null 2>&1 || true; \
     pnpm install --frozen-lockfile; \
@@ -56,40 +59,41 @@ else \
     npm install; \
 fi"#;
 
-        let full_cmd = if is_node_runtime {
-                format!(
-                        "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {} && {}",
-                        deps_cmd, git_url, job.commit_sha, node_install_cmd, build_cmd
-                )
-        } else {
-                // Non-Node runtimes (e.g. Rust) should provide their own build command.
-                format!(
-                        "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {}",
-                        deps_cmd, git_url, job.commit_sha, build_cmd
-                )
-        };
+    let full_cmd = if is_node_runtime {
+        format!(
+            "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {} && {}",
+            deps_cmd, git_url, job.commit_sha, node_install_cmd, build_cmd
+        )
+    } else {
+        // Non-Node runtimes (e.g. Rust) should provide their own build command.
+        format!(
+            "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {}",
+            deps_cmd, git_url, job.commit_sha, build_cmd
+        )
+    };
 
     let mut cmd = Command::new("docker");
     cmd.args([
         "run",
-        "--name", &container_name,
-        "--network", docker_network,
-        "--workdir", "/app",
-        "-e", &format!("PROJECT_ID={}", job.project_id),
-        "-e", &format!("DEPLOYMENT_ID={}", job.deployment_id),
+        "--name",
+        &container_name,
+        "--network",
+        docker_network,
+        "--workdir",
+        "/app",
+        "-e",
+        &format!("PROJECT_ID={}", job.project_id),
+        "-e",
+        &format!("DEPLOYMENT_ID={}", job.deployment_id),
     ]);
 
     for (key, value) in &job.env_vars {
         cmd.arg("-e").arg(format!("{}={}", key, value));
     }
 
-    cmd.args([
-        &node_image,
-        "sh", "-c", &full_cmd,
-    ]);
+    cmd.args([&node_image, "sh", "-c", &full_cmd]);
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.kill_on_drop(true);
 
     let _ = nats
@@ -135,10 +139,14 @@ fi"#;
         }
     });
 
-    let status = wait_for_status_with_timeout(async {
-        let _ = tokio::join!(stdout_task, stderr_task);
-        child.wait().await
-    }, build_timeout).await?;
+    let status = wait_for_status_with_timeout(
+        async {
+            let _ = tokio::join!(stdout_task, stderr_task);
+            child.wait().await
+        },
+        build_timeout,
+    )
+    .await?;
 
     if !status.success() {
         anyhow::bail!("build failed with exit code: {:?}", status.code());
@@ -147,7 +155,10 @@ fi"#;
     Ok(())
 }
 
-async fn wait_for_status_with_timeout<F>(wait: F, build_timeout: Duration) -> anyhow::Result<std::process::ExitStatus>
+async fn wait_for_status_with_timeout<F>(
+    wait: F,
+    build_timeout: Duration,
+) -> anyhow::Result<std::process::ExitStatus>
 where
     F: Future<Output = std::io::Result<std::process::ExitStatus>>,
 {
@@ -158,7 +169,11 @@ where
 }
 
 async fn detect_runtime(job: &BuildJob) -> &'static str {
-    if job.build_command.as_ref().map_or(false, |c| c.contains("cargo")) {
+    if job
+        .build_command
+        .as_ref()
+        .map_or(false, |c| c.contains("cargo"))
+    {
         "rust:slim"
     } else {
         "node:22-alpine"

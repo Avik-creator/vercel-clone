@@ -1,13 +1,13 @@
-use axum::{extract::{Path, State}, Json};
-use serde_json::Value;
-use uuid::Uuid;
 use crate::{
-    AppState,
-    errors::AppResult,
-    middleware::auth::AuthUser,
-    models::CreateApiKeyRequest,
+    AppState, errors::AppResult, middleware::auth::AuthUser, models::CreateApiKeyRequest,
     services::api_keys as key_service,
 };
+use axum::{
+    Json,
+    extract::{Path, State},
+};
+use serde_json::Value;
+use uuid::Uuid;
 
 pub async fn list(
     State(state): State<AppState>,

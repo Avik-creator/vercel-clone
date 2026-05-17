@@ -1,18 +1,13 @@
-use axum::{
-    body::Bytes,
-    extract::State,
-    http::HeaderMap,
-    Json,
-};
-use hmac::{Hmac, Mac};
-use serde::Serialize;
-use sha2::Sha256;
 use crate::{
     AppState,
     errors::{AppError, AppResult},
     middleware::auth::AuthUser,
     services::github as github_service,
 };
+use axum::{Json, body::Bytes, extract::State, http::HeaderMap};
+use hmac::{Hmac, Mac};
+use serde::Serialize;
+use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -31,8 +26,9 @@ pub async fn list_repos(
     State(_state): State<AppState>,
     AuthUser(user): AuthUser,
 ) -> AppResult<Json<Vec<GitHubRepo>>> {
-    let access_token = user.github_access_token
-        .ok_or_else(|| AppError::BadRequest("GitHub account not linked. Please sign in with GitHub.".into()))?;
+    let access_token = user.github_access_token.ok_or_else(|| {
+        AppError::BadRequest("GitHub account not linked. Please sign in with GitHub.".into())
+    })?;
 
     let octocrab = octocrab::OctocrabBuilder::new()
         .personal_token(access_token)
@@ -50,15 +46,19 @@ pub async fn list_repos(
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("github repos fetch failed: {e}")))?;
 
-    let repos: Vec<GitHubRepo> = repos.items.into_iter().map(|r| GitHubRepo {
-        id: r.id.0 as i64,
-        name: r.name,
-        full_name: r.full_name.unwrap_or_default(),
-        description: r.description,
-        private: r.private.unwrap_or(false),
-        default_branch: r.default_branch.unwrap_or_else(|| "main".to_string()),
-        html_url: r.html_url.map(|u| u.to_string()).unwrap_or_default(),
-    }).collect();
+    let repos: Vec<GitHubRepo> = repos
+        .items
+        .into_iter()
+        .map(|r| GitHubRepo {
+            id: r.id.0 as i64,
+            name: r.name,
+            full_name: r.full_name.unwrap_or_default(),
+            description: r.description,
+            private: r.private.unwrap_or(false),
+            default_branch: r.default_branch.unwrap_or_else(|| "main".to_string()),
+            html_url: r.html_url.map(|u| u.to_string()).unwrap_or_default(),
+        })
+        .collect();
 
     Ok(Json(repos))
 }
@@ -95,7 +95,9 @@ pub async fn handle_webhook(
         "push" => github_service::handle_push(&state, payload).await?,
         "pull_request" => github_service::handle_pull_request(&state, payload).await?,
         "installation" => github_service::handle_installation(&state, payload).await?,
-        "installation_repositories" => github_service::handle_installation_repositories(&state, payload).await?,
+        "installation_repositories" => {
+            github_service::handle_installation_repositories(&state, payload).await?
+        }
         "ping" => tracing::info!("github ping received"),
         other => tracing::debug!(event = %other, "unhandled github event"),
     }

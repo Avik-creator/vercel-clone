@@ -1,16 +1,19 @@
-use axum::{
-    extract::{Path, State},
-    Json,
-};
-use serde_json::Value;
-use uuid::Uuid;
 use crate::{
     AppState,
     errors::AppResult,
     middleware::auth::AuthUser,
-    models::{CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, LinkGithubRequest, UpdateEnvVarsRequest, UpdateProjectRequest},
+    models::{
+        CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, LinkGithubRequest,
+        UpdateEnvVarsRequest, UpdateProjectRequest,
+    },
     services::projects as project_service,
 };
+use axum::{
+    Json,
+    extract::{Path, State},
+};
+use serde_json::Value;
+use uuid::Uuid;
 
 pub async fn list(
     State(state): State<AppState>,

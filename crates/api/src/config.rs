@@ -31,6 +31,12 @@ pub struct AppConfig {
     #[serde(default = "default_nats_url")]
     pub nats_url: String,
 
+    #[serde(default = "default_minio_endpoint")]
+    pub minio_endpoint: String,
+
+    #[serde(default = "default_minio_bucket")]
+    pub minio_bucket: String,
+
     /// Frontend URL for OAuth redirects
     #[serde(default = "default_frontend_url")]
     pub frontend_url: String,
@@ -50,9 +56,27 @@ impl AppConfig {
     }
 }
 
-fn default_host() -> String { "0.0.0.0".into() }
-fn default_port() -> u16 { 3000 }
-fn default_env() -> String { "development".into() }
-fn default_base_domain() -> String { "localhost".into() }
-fn default_nats_url() -> String { "nats://localhost:4222".into() }
-fn default_frontend_url() -> String { "http://localhost:3000".into() }
+fn default_host() -> String {
+    "0.0.0.0".into()
+}
+fn default_port() -> u16 {
+    3000
+}
+fn default_env() -> String {
+    "development".into()
+}
+fn default_base_domain() -> String {
+    "localhost".into()
+}
+fn default_nats_url() -> String {
+    "nats://localhost:4222".into()
+}
+fn default_minio_endpoint() -> String {
+    "http://localhost:9000".into()
+}
+fn default_minio_bucket() -> String {
+    "deployments".into()
+}
+fn default_frontend_url() -> String {
+    "http://localhost:3000".into()
+}

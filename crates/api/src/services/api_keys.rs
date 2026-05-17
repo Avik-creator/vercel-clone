@@ -1,18 +1,18 @@
-use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
-    Argon2,
-};
-use rand::Rng;
-use uuid::Uuid;
 use crate::{
     AppState,
     errors::AppResult,
     models::{ApiKey, CreateApiKeyRequest},
 };
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHasher, SaltString, rand_core::OsRng},
+};
+use rand::Rng;
+use uuid::Uuid;
 
 pub async fn list(state: &AppState, user_id: Uuid) -> AppResult<Vec<ApiKey>> {
     let keys = sqlx::query_as::<_, ApiKey>(
-        "SELECT * FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC"
+        "SELECT * FROM api_keys WHERE user_id = $1 ORDER BY created_at DESC",
     )
     .bind(user_id)
     .fetch_all(&*state.db)
@@ -38,7 +38,9 @@ pub async fn create(
         .map(|h| h.to_string())
         .map_err(|e| crate::errors::AppError::Internal(anyhow::anyhow!("hash error: {e}")))?;
 
-    let expires_at = req.expires_in_days.map(|d| chrono::Utc::now() + chrono::Duration::days(d));
+    let expires_at = req
+        .expires_in_days
+        .map(|d| chrono::Utc::now() + chrono::Duration::days(d));
     let id = Uuid::new_v4();
     let now = chrono::Utc::now();
 
@@ -47,7 +49,7 @@ pub async fn create(
         INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, expires_at, created_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING *
-        "#
+        "#,
     )
     .bind(id)
     .bind(user_id)
@@ -65,12 +67,10 @@ pub async fn create(
 }
 
 pub async fn revoke(state: &AppState, user_id: Uuid, id: Uuid) -> AppResult<()> {
-    sqlx::query(
-        "DELETE FROM api_keys WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(user_id)
-    .execute(&*state.db)
-    .await?;
+    sqlx::query("DELETE FROM api_keys WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(user_id)
+        .execute(&*state.db)
+        .await?;
     Ok(())
 }

@@ -17,7 +17,7 @@ pub struct Project {
     pub output_dir: Option<String>,
     pub root_dir: Option<String>,
     pub production_branch: String,
-    pub env_vars: serde_json::Value,   // encrypted JSON blob
+    pub env_vars: serde_json::Value, // encrypted JSON blob
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

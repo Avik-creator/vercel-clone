@@ -1,9 +1,13 @@
-use serde_json::Value;
+use crate::{
+    AppState,
+    errors::{AppError, AppResult},
+    models::BuildJob,
+};
 use secrecy::ExposeSecret;
+use serde_json::Value;
 use sqlx::Row;
 use std::collections::HashMap;
 use uuid::Uuid;
-use crate::{AppState, errors::{AppError, AppResult}, models::BuildJob};
 
 /// Generate an installation access token for cloning private repos
 pub async fn get_installation_token(state: &AppState, installation_id: i64) -> AppResult<String> {
@@ -11,7 +15,9 @@ pub async fn get_installation_token(state: &AppState, installation_id: i64) -> A
         .app(
             state.config.github_app_id.into(),
             jsonwebtoken::EncodingKey::from_rsa_pem(state.config.github_app_private_key.as_bytes())
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid github app private key: {e}")))?,
+                .map_err(|e| {
+                    AppError::Internal(anyhow::anyhow!("invalid github app private key: {e}"))
+                })?,
         )
         .build()
         .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
@@ -21,19 +27,21 @@ pub async fn get_installation_token(state: &AppState, installation_id: i64) -> A
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to get installation client: {e}")))?
         .installation_token()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to get installation token: {e}")))?;
+        .map_err(|e| {
+            AppError::Internal(anyhow::anyhow!("failed to get installation token: {e}"))
+        })?;
 
     Ok(token.expose_secret().to_string())
 }
 
 /// push event → trigger a deployment for the linked project
 pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
-    let repo_full_name = payload["repository"]["full_name"]
-        .as_str()
-        .ok_or_else(|| AppError::BadRequest("missing repository.full_name in webhook payload".into()))?;
-    let commit_sha = payload["after"]
-        .as_str()
-        .ok_or_else(|| AppError::BadRequest("missing 'after' (commit sha) in webhook payload".into()))?;
+    let repo_full_name = payload["repository"]["full_name"].as_str().ok_or_else(|| {
+        AppError::BadRequest("missing repository.full_name in webhook payload".into())
+    })?;
+    let commit_sha = payload["after"].as_str().ok_or_else(|| {
+        AppError::BadRequest("missing 'after' (commit sha) in webhook payload".into())
+    })?;
     let commit_message = payload["head_commit"]["message"]
         .as_str()
         .unwrap_or("unknown commit");
@@ -41,11 +49,12 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         .as_str()
         .unwrap_or("")
         .trim_start_matches("refs/heads/");
-    let installation_id = payload["installation"]["id"]
-        .as_i64();
+    let installation_id = payload["installation"]["id"].as_i64();
 
     if branch.is_empty() {
-        return Err(AppError::BadRequest("missing branch ref in webhook payload".into()));
+        return Err(AppError::BadRequest(
+            "missing branch ref in webhook payload".into(),
+        ));
     }
 
     tracing::info!(repo = %repo_full_name, sha = %commit_sha, branch = %branch, "push event");
@@ -64,18 +73,20 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
     };
 
     // Find projects linked to this repo
-    let projects = sqlx::query(
-        "SELECT id, build_command, output_dir FROM projects WHERE github_repo = $1",
-    )
-    .bind(repo_full_name)
-    .fetch_all(&*state.db)
-    .await?;
+    let projects =
+        sqlx::query("SELECT id, build_command, output_dir FROM projects WHERE github_repo = $1")
+            .bind(repo_full_name)
+            .fetch_all(&*state.db)
+            .await?;
 
     for project in projects {
         let preview_hash: String = (0..8)
             .map(|_| format!("{:x}", rand::random::<u8>() % 16))
             .collect();
-        let preview_url = format!("{}-{}.{}", preview_hash, "preview", state.config.base_domain);
+        let preview_url = format!(
+            "{}-{}.{}",
+            preview_hash, "preview", state.config.base_domain
+        );
 
         let project_id: Uuid = project.try_get("id")?;
         let build_command: Option<String> = project.try_get("build_command").ok().flatten();
@@ -99,20 +110,17 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         .await?;
 
         // Fetch env vars from projects.env_vars JSONB column
-        let env_vars_json: serde_json::Value = sqlx::query_scalar(
-            "SELECT env_vars FROM projects WHERE id = $1",
-        )
-        .bind(project_id)
-        .fetch_one(&*state.db)
-        .await?;
+        let env_vars_json: serde_json::Value =
+            sqlx::query_scalar("SELECT env_vars FROM projects WHERE id = $1")
+                .bind(project_id)
+                .fetch_one(&*state.db)
+                .await?;
 
         let env_vars: HashMap<String, String> = env_vars_json
             .as_object()
             .map(|obj| {
                 obj.iter()
-                    .filter_map(|(k, v)| {
-                        v.as_str().map(|s| (k.clone(), s.to_string()))
-                    })
+                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
                     .collect()
             })
             .unwrap_or_default();
@@ -148,8 +156,12 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
 
 pub async fn handle_pull_request(_state: &AppState, payload: Value) -> AppResult<()> {
     let action = payload["action"].as_str().unwrap_or_default();
-    let pr_number = payload["pull_request"]["number"].as_u64().unwrap_or_default();
-    let repo = payload["repository"]["full_name"].as_str().unwrap_or_default();
+    let pr_number = payload["pull_request"]["number"]
+        .as_u64()
+        .unwrap_or_default();
+    let repo = payload["repository"]["full_name"]
+        .as_str()
+        .unwrap_or_default();
 
     tracing::info!(action = %action, pr = %pr_number, repo = %repo, "pull_request event");
 

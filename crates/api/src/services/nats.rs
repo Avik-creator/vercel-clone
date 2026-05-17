@@ -31,7 +31,12 @@ impl NatsClient {
         let context = async_nats::jetstream::new(client.clone());
 
         ensure_stream(&context, "build_jobs", vec!["build.jobs.>", "build.jobs"]).await?;
-        ensure_stream(&context, "build_results", vec!["build.results.>", "build.results"]).await?;
+        ensure_stream(
+            &context,
+            "build_results",
+            vec!["build.results.>", "build.results"],
+        )
+        .await?;
         ensure_stream(&context, "build_logs", vec!["build.logs.>", "build.logs"]).await?;
 
         Ok(Self {
@@ -72,25 +77,30 @@ async fn ensure_stream(
 ) -> Result<Stream, AppError> {
     match context.get_stream(name).await {
         Ok(s) => Ok(s),
-        Err(_) => {
-            context
-                .create_stream(async_nats::jetstream::stream::Config {
-                    name: name.to_string(),
-                    subjects: subjects.into_iter().map(|s| s.to_string()).collect(),
-                    retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
-                    max_messages: 50_000,
-                    max_age: std::time::Duration::from_secs(7 * 24 * 3600),
-                    ..Default::default()
-                })
-                .await
-                .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to create stream {}: {}", name, e)))
-        }
+        Err(_) => context
+            .create_stream(async_nats::jetstream::stream::Config {
+                name: name.to_string(),
+                subjects: subjects.into_iter().map(|s| s.to_string()).collect(),
+                retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
+                max_messages: 50_000,
+                max_age: std::time::Duration::from_secs(7 * 24 * 3600),
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| {
+                AppError::Internal(anyhow::anyhow!("failed to create stream {}: {}", name, e))
+            }),
     }
 }
 
-async fn publish<T: Serialize>(client: &async_nats::Client, subject: &str, data: &T) -> Result<(), AppError> {
-    let payload = serde_json::to_vec(data)
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to serialize NATS message: {}", e)))?;
+async fn publish<T: Serialize>(
+    client: &async_nats::Client,
+    subject: &str,
+    data: &T,
+) -> Result<(), AppError> {
+    let payload = serde_json::to_vec(data).map_err(|e| {
+        AppError::Internal(anyhow::anyhow!("failed to serialize NATS message: {}", e))
+    })?;
 
     client
         .publish(subject.to_string(), payload.into())

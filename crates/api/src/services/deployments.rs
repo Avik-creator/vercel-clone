@@ -1,14 +1,17 @@
+use crate::{
+    AppState,
+    errors::{AppError, AppResult, NotFoundExt},
+    models::{
+        BuildCallbackRequest, BuildJob, CreateDeploymentRequest, Deployment, DeploymentState,
+        EnvVarTarget,
+    },
+    services::github as github_service,
+    services::projects as project_service,
+};
 use rand::Rng;
 use sqlx::Row;
 use std::collections::HashMap;
 use uuid::Uuid;
-use crate::{
-    AppState,
-    errors::{AppError, AppResult, NotFoundExt},
-    models::{BuildCallbackRequest, BuildJob, CreateDeploymentRequest, Deployment, DeploymentState, EnvVarTarget},
-    services::projects as project_service,
-    services::github as github_service,
-};
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Deployment>> {
     let rows = sqlx::query_as::<_, Deployment>(
@@ -18,12 +21,25 @@ pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Dep
         WHERE p.owner_id = $1
         ORDER BY d.created_at DESC
         LIMIT 50
-        "#
+        "#,
     )
     .bind(user_id)
     .fetch_all(&*state.db)
     .await?;
     Ok(rows)
+}
+
+pub fn artifact_object_key(artifact_prefix: &str, request_path: &str) -> String {
+    let prefix = artifact_prefix
+        .trim_start_matches('/')
+        .trim_end_matches('/');
+    let path = request_path.trim_start_matches('/');
+
+    if path.is_empty() {
+        format!("{}/index.html", prefix)
+    } else {
+        format!("{}/{}", prefix, path)
+    }
 }
 
 pub async fn list_for_project(
@@ -33,7 +49,7 @@ pub async fn list_for_project(
 ) -> AppResult<Vec<Deployment>> {
     // Verify ownership
     sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND owner_id = $2)"
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = $1 AND owner_id = $2)",
     )
     .bind(project_id)
     .bind(user_id)
@@ -43,7 +59,7 @@ pub async fn list_for_project(
     .ok_or_else(|| AppError::NotFound("project not found".into()))?;
 
     let rows = sqlx::query_as::<_, Deployment>(
-        "SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50"
+        "SELECT * FROM deployments WHERE project_id = $1 ORDER BY created_at DESC LIMIT 50",
     )
     .bind(project_id)
     .fetch_all(&*state.db)
@@ -56,7 +72,9 @@ pub async fn create(
     user_id: Uuid,
     req: CreateDeploymentRequest,
 ) -> AppResult<Deployment> {
-    let project_id = req.project_id.ok_or_else(|| AppError::BadRequest("missing project_id".into()))?;
+    let project_id = req
+        .project_id
+        .ok_or_else(|| AppError::BadRequest("missing project_id".into()))?;
 
     // Verify project ownership
     let project = sqlx::query(
@@ -71,7 +89,8 @@ pub async fn create(
 
     let _project_id: Uuid = project.try_get("id")?;
     let github_repo: Option<String> = project.try_get("github_repo")?;
-    let github_installation_id: Option<i64> = project.try_get("github_installation_id").ok().flatten();
+    let github_installation_id: Option<i64> =
+        project.try_get("github_installation_id").ok().flatten();
 
     // Get installation token for cloning private repos
     let github_token = if let Some(inst_id) = github_installation_id {
@@ -90,7 +109,10 @@ pub async fn create(
     let preview_hash: String = (0..8)
         .map(|_| format!("{:x}", rand::thread_rng().gen_range(0..16)))
         .collect();
-    let preview_url = format!("{}-{}.{}", preview_hash, "preview", state.config.base_domain);
+    let preview_url = format!(
+        "{}-{}.{}",
+        preview_hash, "preview", state.config.base_domain
+    );
 
     let deployment = sqlx::query_as::<_, Deployment>(
         r#"
@@ -99,7 +121,7 @@ pub async fn create(
              state, url, is_production)
         VALUES ($1, $2, $3, $4, 'queued', $5, false)
         RETURNING *
-        "#
+        "#,
     )
     .bind(project_id)
     .bind(&req.commit_sha)
@@ -155,7 +177,7 @@ pub async fn get_for_user(state: &AppState, user_id: Uuid, id: Uuid) -> AppResul
         SELECT d.* FROM deployments d
         JOIN projects p ON d.project_id = p.id
         WHERE d.id = $1 AND p.owner_id = $2
-        "#
+        "#,
     )
     .bind(id)
     .bind(user_id)
@@ -180,7 +202,9 @@ pub async fn cancel(state: &AppState, user_id: Uuid, id: Uuid) -> AppResult<()> 
     .rows_affected();
 
     if rows == 0 {
-        return Err(AppError::NotFound("deployment not found or not cancellable".into()));
+        return Err(AppError::NotFound(
+            "deployment not found or not cancellable".into(),
+        ));
     }
     Ok(())
 }
@@ -189,7 +213,9 @@ pub async fn promote_to_production(state: &AppState, user_id: Uuid, id: Uuid) ->
     let deploy = get_for_user(state, user_id, id).await?;
 
     if deploy.state != DeploymentState::Ready {
-        return Err(AppError::BadRequest("only ready deployments can be promoted".into()));
+        return Err(AppError::BadRequest(
+            "only ready deployments can be promoted".into(),
+        ));
     }
 
     // Demote current production deployment for this project
@@ -202,42 +228,42 @@ pub async fn promote_to_production(state: &AppState, user_id: Uuid, id: Uuid) ->
     .await?;
 
     // Promote this one
-    sqlx::query(
-        "UPDATE deployments SET is_production = true, updated_at = NOW() WHERE id = $1",
-    )
-    .bind(id)
-    .execute(&*state.db)
-    .await?;
+    sqlx::query("UPDATE deployments SET is_production = true, updated_at = NOW() WHERE id = $1")
+        .bind(id)
+        .execute(&*state.db)
+        .await?;
 
     Ok(())
 }
 
 /// Called by build workers when build state changes
 pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) -> AppResult<()> {
-    let log_update = if let Some(chunk) = &req.log_chunk {
-        Some(sqlx::query(
+    let log_update =
+        if let Some(chunk) = &req.log_chunk {
+            Some(sqlx::query(
             "UPDATE deployments SET build_log = COALESCE(build_log, '') || $1 WHERE id = $2",
         )
         .bind(chunk)
         .bind(req.deployment_id)
         .execute(&*state.db)
         .await?)
-    } else {
-        None
-    };
+        } else {
+            None
+        };
 
     let _ = log_update;
 
-    let current_state = sqlx::query_scalar::<_, DeploymentState>(
-        "SELECT state FROM deployments WHERE id = $1",
-    )
-    .bind(req.deployment_id)
-    .fetch_one(&*state.db)
-    .await
-    .or_not_found("deployment")?;
+    let current_state =
+        sqlx::query_scalar::<_, DeploymentState>("SELECT state FROM deployments WHERE id = $1")
+            .bind(req.deployment_id)
+            .fetch_one(&*state.db)
+            .await
+            .or_not_found("deployment")?;
 
     if !is_valid_transition(current_state, req.state.clone()) {
-        return Err(AppError::BadRequest("invalid deployment state transition".into()));
+        return Err(AppError::BadRequest(
+            "invalid deployment state transition".into(),
+        ));
     }
 
     let state_val = req.state.clone();
@@ -300,8 +326,29 @@ mod tests {
 
     #[test]
     fn terminal_deployments_cannot_reenter_building() {
-        assert!(!is_valid_transition(DeploymentState::Cancelled, DeploymentState::Building));
-        assert!(!is_valid_transition(DeploymentState::Ready, DeploymentState::Building));
-        assert!(is_valid_transition(DeploymentState::Queued, DeploymentState::Building));
+        assert!(!is_valid_transition(
+            DeploymentState::Cancelled,
+            DeploymentState::Building
+        ));
+        assert!(!is_valid_transition(
+            DeploymentState::Ready,
+            DeploymentState::Building
+        ));
+        assert!(is_valid_transition(
+            DeploymentState::Queued,
+            DeploymentState::Building
+        ));
+    }
+
+    #[test]
+    fn artifact_serving_defaults_to_index_html() {
+        assert_eq!(
+            artifact_object_key("deployment-id/", "/"),
+            "deployment-id/index.html"
+        );
+        assert_eq!(
+            artifact_object_key("deployment-id/", "/assets/app.js"),
+            "deployment-id/assets/app.js"
+        );
     }
 }

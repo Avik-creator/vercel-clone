@@ -1,12 +1,12 @@
+mod builder;
 mod config;
 mod git;
-mod builder;
 mod models;
 mod nats;
 mod storage;
 
-use std::path::PathBuf;
 use futures::StreamExt;
+use std::path::PathBuf;
 
 use crate::models::{BuildResult, DeploymentState, LogLine};
 
@@ -14,8 +14,8 @@ use crate::models::{BuildResult, DeploymentState, LogLine};
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
-    let env_filter = std::env::var("RUST_LOG")
-        .unwrap_or_else(|_| "info,vercel_clone_worker=debug".to_string());
+    let env_filter =
+        std::env::var("RUST_LOG").unwrap_or_else(|_| "info,vercel_clone_worker=debug".to_string());
 
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
@@ -61,7 +61,16 @@ async fn main() -> anyhow::Result<()> {
         };
         let _ = nats.publish_log(&log).await;
 
-        let result = match process_job(&job, &nats, &storage, &work_base, &config.docker_network, config.build_timeout_secs).await {
+        let result = match process_job(
+            &job,
+            &nats,
+            &storage,
+            &work_base,
+            &config.docker_network,
+            config.build_timeout_secs,
+        )
+        .await
+        {
             Ok(artifact_key) => {
                 tracing::info!(%deployment_id, "build succeeded");
                 BuildResult {
@@ -74,11 +83,13 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => {
                 tracing::error!(%deployment_id, error = %e, "build failed");
-                let _ = nats.publish_log(&LogLine {
-                    deployment_id,
-                    line: format!("error: {}", e),
-                    timestamp: chrono::Utc::now(),
-                }).await;
+                let _ = nats
+                    .publish_log(&LogLine {
+                        deployment_id,
+                        line: format!("error: {}", e),
+                        timestamp: chrono::Utc::now(),
+                    })
+                    .await;
                 BuildResult {
                     deployment_id,
                     state: DeploymentState::Error,
@@ -121,7 +132,13 @@ async fn process_job(
     let output_dir = job.output_dir.as_deref().unwrap_or("dist").to_string();
     let container_name = format!("build-{}", job.deployment_id);
 
-    builder::run_build(job, nats, docker_network, std::time::Duration::from_secs(build_timeout_secs)).await?;
+    builder::run_build(
+        job,
+        nats,
+        docker_network,
+        std::time::Duration::from_secs(build_timeout_secs),
+    )
+    .await?;
 
     let log = LogLine {
         deployment_id: job.deployment_id,
@@ -147,7 +164,9 @@ async fn process_job(
         anyhow::bail!("failed to extract build output from container");
     }
 
-    let artifact_key = storage.upload_dir(job.deployment_id, &local_output, nats).await?;
+    let artifact_key = storage
+        .upload_dir(job.deployment_id, &local_output, nats)
+        .await?;
 
     let log = LogLine {
         deployment_id: job.deployment_id,

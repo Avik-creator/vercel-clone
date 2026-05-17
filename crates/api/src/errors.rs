@@ -1,7 +1,7 @@
 use axum::{
-    response::{IntoResponse, Response},
     Json,
     http::StatusCode,
+    response::{IntoResponse, Response},
 };
 
 use serde_json::json;
@@ -37,7 +37,6 @@ pub enum AppError {
     InvalidWebhookSignature,
 }
 
-
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code, message) = match &self {
@@ -46,19 +45,39 @@ impl IntoResponse for AppError {
             AppError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN", msg.clone()),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone()),
             AppError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone()),
-            AppError::UnprocessableEntity(msg) => (StatusCode::UNPROCESSABLE_ENTITY, "UNPROCESSABLE_ENTITY", msg.clone()),
-            AppError::InvalidWebhookSignature => (StatusCode::UNAUTHORIZED, "INVALID_SIGNATURE", "webhook signature mismatch".into()),
+            AppError::UnprocessableEntity(msg) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "UNPROCESSABLE_ENTITY",
+                msg.clone(),
+            ),
+            AppError::InvalidWebhookSignature => (
+                StatusCode::UNAUTHORIZED,
+                "INVALID_SIGNATURE",
+                "webhook signature mismatch".into(),
+            ),
             AppError::Database(e) => {
                 tracing::error!(error = %e, "database error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "DATABASE_ERROR", "internal error".into())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "DATABASE_ERROR",
+                    "internal error".into(),
+                )
             }
             AppError::Internal(e) => {
                 tracing::error!(error = %e, "internal error");
-                (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "internal error".into())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "internal error".into(),
+                )
             }
         };
 
-        (status, Json(json!({ "error": { "code": code, "message": message } }))).into_response()
+        (
+            status,
+            Json(json!({ "error": { "code": code, "message": message } })),
+        )
+            .into_response()
     }
 }
 

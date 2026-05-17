@@ -1,25 +1,17 @@
-use axum::{
-    extract::FromRequestParts,
-    http::{request::Parts},
-    RequestPartsExt,
-};
+use crate::{AppState, errors::AppError, models::User};
+use axum::{RequestPartsExt, extract::FromRequestParts, http::request::Parts};
 use axum_extra::{
-    headers::{Authorization, authorization::Bearer},
     TypedHeader,
+    headers::{Authorization, authorization::Bearer},
 };
-use jsonwebtoken::{decode, DecodingKey, Validation};
+use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use uuid::Uuid;
-use crate::{
-    AppState,
-    errors::AppError,
-    models::User,
-};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
-    pub sub: Uuid,   // user ID
+    pub sub: Uuid, // user ID
     pub exp: i64,
     pub iat: i64,
 }
@@ -33,14 +25,14 @@ struct TokenQuery {
 pub struct AuthUser(pub User);
 
 impl FromRequestParts<AppState> for AuthUser {
-  type Rejection = AppError;
+    type Rejection = AppError;
 
-  async fn from_request_parts(
-    req: &mut Parts,
-    state: &AppState,
-  ) -> Result<Self, Self::Rejection> {
-    // First try Authorization header
-    if let Ok(TypedHeader(Authorization(bearer))) =
+    async fn from_request_parts(
+        req: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        // First try Authorization header
+        if let Ok(TypedHeader(Authorization(bearer))) =
             req.extract::<TypedHeader<Authorization<Bearer>>>().await
         {
             let token = bearer.token();
@@ -53,18 +45,22 @@ impl FromRequestParts<AppState> for AuthUser {
             return authenticate_jwt(token, state).await;
         }
 
-    // Fallback to query parameter (for SSE endpoints)
-    if let Ok(axum::extract::Query(query)) = req.extract::<axum::extract::Query<TokenQuery>>().await {
-        if let Some(token) = query.token {
-            if token.starts_with("cp_") {
-                return authenticate_api_key(&token, state).await;
+        // Fallback to query parameter (for SSE endpoints)
+        if let Ok(axum::extract::Query(query)) =
+            req.extract::<axum::extract::Query<TokenQuery>>().await
+        {
+            if let Some(token) = query.token {
+                if token.starts_with("cp_") {
+                    return authenticate_api_key(&token, state).await;
+                }
+                return authenticate_jwt(&token, state).await;
             }
-            return authenticate_jwt(&token, state).await;
         }
-    }
 
-    Err(AppError::Unauthorized("missing authorization header".into()))
-  }
+        Err(AppError::Unauthorized(
+            "missing authorization header".into(),
+        ))
+    }
 }
 
 async fn authenticate_jwt(token: &str, state: &AppState) -> Result<AuthUser, AppError> {
@@ -73,16 +69,14 @@ async fn authenticate_jwt(token: &str, state: &AppState) -> Result<AuthUser, App
         .map_err(|_| AppError::Unauthorized("invalid or expired token".into()))?
         .claims;
 
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE id = $1"
-    )
-    .bind(claims.sub)
-    .fetch_one(&*state.db)
-    .await
-    .map_err(|e| match e {
-        sqlx::Error::RowNotFound => AppError::Unauthorized("user not found".into()),
-        _ => AppError::Database(e.into()),
-    })?;
+    let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1")
+        .bind(claims.sub)
+        .fetch_one(&*state.db)
+        .await
+        .map_err(|e| match e {
+            sqlx::Error::RowNotFound => AppError::Unauthorized("user not found".into()),
+            _ => AppError::Database(e.into()),
+        })?;
 
     Ok(AuthUser(user))
 }
@@ -131,7 +125,7 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
         }
     }
 
-     // Verify full hash
+    // Verify full hash
     let hash = PasswordHash::new(&key_hash)
         .map_err(|_| AppError::Unauthorized("invalid api key".into()))?;
     Argon2::default()
@@ -141,12 +135,10 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
     // Update last_used_at async (fire and forget)
     let pool = state.db.pool.clone();
     tokio::spawn(async move {
-        let _ = sqlx::query(
-            "UPDATE api_keys SET last_used_at = NOW() WHERE id = $1",
-        )
-        .bind(api_key_id)
-        .execute(&pool)
-        .await;
+        let _ = sqlx::query("UPDATE api_keys SET last_used_at = NOW() WHERE id = $1")
+            .bind(api_key_id)
+            .execute(&pool)
+            .await;
     });
 
     let user = User {
@@ -162,5 +154,4 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
     };
 
     Ok(AuthUser(user))
-
 }

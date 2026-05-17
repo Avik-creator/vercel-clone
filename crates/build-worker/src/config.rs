@@ -32,8 +32,18 @@ impl WorkerConfig {
     }
 }
 
-fn default_nats_url() -> String { "nats://localhost:4222".into() }
-fn default_minio_endpoint() -> String { "http://localhost:9000".into() }
-fn default_minio_bucket() -> String { "deployments".into() }
-fn default_docker_network() -> String { "vercel-clone_default".into() }
-fn default_build_timeout_secs() -> u64 { 600 }
+fn default_nats_url() -> String {
+    "nats://localhost:4222".into()
+}
+fn default_minio_endpoint() -> String {
+    "http://localhost:9000".into()
+}
+fn default_minio_bucket() -> String {
+    "deployments".into()
+}
+fn default_docker_network() -> String {
+    "vercel-clone_default".into()
+}
+fn default_build_timeout_secs() -> u64 {
+    600
+}
