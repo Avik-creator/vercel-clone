@@ -54,7 +54,7 @@ elif [ -f yarn.lock ]; then \
     corepack prepare yarn@stable --activate > /dev/null 2>&1 || true; \
     yarn install --frozen-lockfile; \
 elif [ -f package-lock.json ]; then \
-    npm ci; \
+    npm install; \
 else \
     npm install; \
 fi"#;
