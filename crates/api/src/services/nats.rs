@@ -38,7 +38,7 @@ impl NatsClient {
         let context = async_nats::jetstream::new(client.clone());
 
         ensure_stream(&context, "build_jobs", vec!["build.jobs.>", "build.jobs"]).await?;
-        ensure_stream(&context, "build_jobs_dlq", vec!["build.jobs.dlq.>"]).await?;
+        ensure_stream(&context, "build_jobs_dlq", vec!["dlq.build.jobs.>"]).await?;
         ensure_stream(
             &context,
             "build_results",
@@ -204,10 +204,10 @@ mod tests {
 
     #[test]
     fn dlq_stream_captures_failed_build_jobs() {
-        let config = stream_config("build_jobs_dlq", vec!["build.jobs.dlq.>"]);
+        let config = stream_config("build_jobs_dlq", vec!["dlq.build.jobs.>"]);
 
         assert_eq!(config.name, "build_jobs_dlq");
-        assert_eq!(config.subjects, vec!["build.jobs.dlq.>".to_string()]);
+        assert_eq!(config.subjects, vec!["dlq.build.jobs.>".to_string()]);
     }
 
     #[test]

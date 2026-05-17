@@ -22,7 +22,7 @@ impl WorkerNats {
         let context = async_nats::jetstream::new(client.clone());
 
         ensure_stream(&context, "build_jobs", vec!["build.jobs.>", "build.jobs"]).await?;
-        ensure_stream(&context, "build_jobs_dlq", vec!["build.jobs.dlq.>"]).await?;
+        ensure_stream(&context, "build_jobs_dlq", vec!["dlq.build.jobs.>"]).await?;
         ensure_stream(
             &context,
             "build_results",
