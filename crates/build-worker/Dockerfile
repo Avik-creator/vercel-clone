@@ -9,16 +9,17 @@ RUN cargo chef prepare --recipe-path recipe.json
 # --- builder: compile deps first (cached), then the binary ---
 FROM chef AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config libssl-dev libgit2-dev cmake && \
+    pkg-config libssl-dev libgit2-dev cmake curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=planner /app/recipe.json recipe.json
-# This layer is cached as long as Cargo.toml / Cargo.lock are unchanged.
 RUN cargo chef cook --release -p vercel-clone-worker --recipe-path recipe.json
 
 COPY . .
 RUN cargo build --release --locked -p vercel-clone-worker
-RUN cargo install railpack --locked
+
+# Download railpack binary (Go binary from Railway, not on crates.io)
+RUN curl -fsSL https://railpack.io/install.sh | BINDIR=/usr/local/bin sh
 
 # --- runtime: minimal image, no Rust toolchain ---
 FROM debian:bookworm-slim
@@ -28,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /app/target/release/vercel-clone-worker .
-COPY --from=builder /usr/local/cargo/bin/railpack /usr/local/bin/railpack
+COPY --from=builder /usr/local/bin/railpack /usr/local/bin/railpack
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
     chown -R appuser:appuser /app
