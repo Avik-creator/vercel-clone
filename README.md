@@ -214,6 +214,14 @@ This is a learning project / local deployment platform. It is **not** production
 
 See the architecture notes in the codebase for what would be needed for a production deployment.
 
+# Images
+
+<img width="983" height="805" alt="Screenshot 2026-05-17 at 7 29 09 PM" src="https://github.com/user-attachments/assets/805e368f-ff66-4a80-b057-f03c39758372" />
+
+
+<img width="1645" height="929" alt="Screenshot 2026-05-17 at 7 29 26 PM" src="https://github.com/user-attachments/assets/b1ee9111-b669-4b0a-9ffe-92d2cc025d99" />
+
+
 ## License
 
 MIT
