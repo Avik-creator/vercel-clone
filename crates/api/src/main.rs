@@ -180,6 +180,15 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
                     .execute(&*db)
                     .await
                 }
+                crate::models::DeploymentState::Uploading => {
+                    sqlx::query(
+                        "UPDATE deployments SET state = 'uploading', build_log = COALESCE(build_log, '') || $1 WHERE id = $2 AND state IN ('queued', 'building', 'uploading')",
+                    )
+                    .bind(result.log_output.as_deref().unwrap_or(""))
+                    .bind(result.deployment_id)
+                    .execute(&*db)
+                    .await
+                }
                 _ => continue,
             };
 

@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 
 use crate::models::{BuildJob, LogLine};
@@ -106,8 +106,8 @@ fi"#;
 
     let mut child = cmd.spawn()?;
 
-    let stdout = child.stdout.take().expect("stdout");
-    let stderr = child.stderr.take().expect("stderr");
+    let stdout = take_child_pipe(child.stdout.take(), "stdout")?;
+    let stderr = take_child_pipe(child.stderr.take(), "stderr")?;
 
     let deployment_id = job.deployment_id;
     let nats_clone = nats.clone();
@@ -155,6 +155,13 @@ fi"#;
     Ok(())
 }
 
+fn take_child_pipe<T>(pipe: Option<T>, name: &str) -> anyhow::Result<T>
+where
+    T: AsyncRead + Unpin,
+{
+    pipe.ok_or_else(|| anyhow::anyhow!("docker child missing {} pipe", name))
+}
+
 async fn wait_for_status_with_timeout<F>(
     wait: F,
     build_timeout: Duration,
@@ -183,6 +190,13 @@ async fn detect_runtime(job: &BuildJob) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn missing_child_pipe_returns_error_instead_of_panicking() {
+        let result = take_child_pipe(Option::<tokio::io::Empty>::None, "stdout");
+
+        assert!(matches!(result, Err(err) if err.to_string().contains("stdout")));
+    }
 
     #[tokio::test]
     async fn build_timeout_is_applied_to_container_wait() {

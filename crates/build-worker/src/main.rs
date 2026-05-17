@@ -1,6 +1,5 @@
 mod builder;
 mod config;
-mod git;
 mod models;
 mod nats;
 mod storage;
@@ -42,7 +41,7 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("subscribing to build jobs");
 
-    let mut jobs = nats.subscribe_jobs().await?;
+    let jobs = nats.subscribe_jobs().await?;
     tokio::pin!(jobs);
 
     while let Some(job) = jobs.next().await {

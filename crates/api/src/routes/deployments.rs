@@ -22,7 +22,7 @@ pub async fn list(
     AuthUser(user): AuthUser,
 ) -> AppResult<Json<Value>> {
     let deploys = deploy_service::list_for_user(&state, user.id).await?;
-    Ok(Json(serde_json::to_value(deploys).unwrap()))
+    Ok(Json(to_json_value(deploys)?))
 }
 
 pub async fn list_for_project(
@@ -31,7 +31,7 @@ pub async fn list_for_project(
     Path(project_id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
     let deploys = deploy_service::list_for_project(&state, user.id, project_id).await?;
-    Ok(Json(serde_json::to_value(deploys).unwrap()))
+    Ok(Json(to_json_value(deploys)?))
 }
 
 pub async fn create(
@@ -42,7 +42,7 @@ pub async fn create(
 ) -> AppResult<Json<Value>> {
     body.project_id = Some(project_id);
     let deploy = deploy_service::create(&state, user.id, body).await?;
-    Ok(Json(serde_json::to_value(deploy).unwrap()))
+    Ok(Json(to_json_value(deploy)?))
 }
 
 pub async fn get(
@@ -51,7 +51,11 @@ pub async fn get(
     Path(id): Path<Uuid>,
 ) -> AppResult<Json<Value>> {
     let deploy = deploy_service::get_for_user(&state, user.id, id).await?;
-    Ok(Json(serde_json::to_value(deploy).unwrap()))
+    Ok(Json(to_json_value(deploy)?))
+}
+
+fn to_json_value<T: serde::Serialize>(value: T) -> AppResult<Value> {
+    serde_json::to_value(value).map_err(|e| AppError::Internal(e.into()))
 }
 
 pub async fn cancel(

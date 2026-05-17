@@ -1,7 +1,7 @@
 use crate::{
     AppState,
     errors::{AppError, AppResult},
-    models::BuildJob,
+    models::{BuildJob, EnvVarEntry, EnvVarTarget},
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -73,8 +73,9 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
     };
 
     // Find projects linked to this repo
-    let projects =
-        sqlx::query("SELECT id, build_command, output_dir FROM projects WHERE github_repo = $1")
+    let projects = sqlx::query(
+        "SELECT id, build_command, output_dir, production_branch, env_vars FROM projects WHERE github_repo = $1",
+    )
             .bind(repo_full_name)
             .fetch_all(&*state.db)
             .await?;
@@ -91,13 +92,15 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         let project_id: Uuid = project.try_get("id")?;
         let build_command: Option<String> = project.try_get("build_command").ok().flatten();
         let output_dir: Option<String> = project.try_get("output_dir").ok().flatten();
+        let production_branch: String = project.try_get("production_branch")?;
+        let is_production = is_production_deployment(branch, &production_branch);
         tracing::info!(project_id = %project_id, "triggering deployment");
 
         let deployment = sqlx::query_as::<_, crate::models::Deployment>(
             r#"
             INSERT INTO deployments
                 (project_id, commit_sha, commit_message, branch, state, url, is_production)
-            VALUES ($1, $2, $3, $4, 'queued', $5, true)
+            VALUES ($1, $2, $3, $4, 'queued', $5, $6)
             RETURNING *
             "#,
         )
@@ -106,24 +109,12 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         .bind(commit_message)
         .bind(branch)
         .bind(preview_url)
+        .bind(is_production)
         .fetch_one(&*state.db)
         .await?;
 
-        // Fetch env vars from projects.env_vars JSONB column
-        let env_vars_json: serde_json::Value =
-            sqlx::query_scalar("SELECT env_vars FROM projects WHERE id = $1")
-                .bind(project_id)
-                .fetch_one(&*state.db)
-                .await?;
-
-        let env_vars: HashMap<String, String> = env_vars_json
-            .as_object()
-            .map(|obj| {
-                obj.iter()
-                    .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let env_vars_json: serde_json::Value = project.try_get("env_vars")?;
+        let env_vars = build_env_map(serde_json::from_value(env_vars_json).unwrap_or_default());
 
         // Dispatch build job via NATS JetStream
         let git_url = format!("https://github.com/{}.git", repo_full_name);
@@ -152,6 +143,18 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
     }
 
     Ok(())
+}
+
+fn is_production_deployment(branch: &str, production_branch: &str) -> bool {
+    branch == production_branch
+}
+
+fn build_env_map(env_vars: Vec<EnvVarEntry>) -> HashMap<String, String> {
+    env_vars
+        .into_iter()
+        .filter(|entry| matches!(entry.target, EnvVarTarget::Build | EnvVarTarget::All))
+        .map(|entry| (entry.key, entry.value))
+        .collect()
 }
 
 pub async fn handle_pull_request(_state: &AppState, payload: Value) -> AppResult<()> {
@@ -193,4 +196,43 @@ pub async fn handle_installation_repositories(_state: &AppState, payload: Value)
     tracing::info!(action = %action, "installation_repositories event");
     // TODO: sync available repos list for the installation
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{EnvVarEntry, EnvVarTarget};
+
+    #[test]
+    fn production_flag_matches_project_production_branch() {
+        assert!(is_production_deployment("main", "main"));
+        assert!(!is_production_deployment("feature", "main"));
+    }
+
+    #[test]
+    fn webhook_env_vars_include_build_and_all_targets_only() {
+        let env_vars = vec![
+            EnvVarEntry {
+                key: "BUILD_ONLY".into(),
+                value: "1".into(),
+                target: EnvVarTarget::Build,
+            },
+            EnvVarEntry {
+                key: "RUNTIME_ONLY".into(),
+                value: "2".into(),
+                target: EnvVarTarget::Runtime,
+            },
+            EnvVarEntry {
+                key: "ALL".into(),
+                value: "3".into(),
+                target: EnvVarTarget::All,
+            },
+        ];
+
+        let filtered = build_env_map(env_vars);
+
+        assert_eq!(filtered.get("BUILD_ONLY").map(String::as_str), Some("1"));
+        assert_eq!(filtered.get("ALL").map(String::as_str), Some("3"));
+        assert!(!filtered.contains_key("RUNTIME_ONLY"));
+    }
 }
