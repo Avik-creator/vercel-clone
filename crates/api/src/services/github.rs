@@ -1,7 +1,8 @@
 use serde_json::Value;
 use sqlx::Row;
+use std::collections::HashMap;
 use uuid::Uuid;
-use crate::{AppState, errors::{AppError, AppResult}};
+use crate::{AppState, errors::{AppError, AppResult}, models::BuildJob};
 
 /// push event → trigger a deployment for the linked project
 pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
@@ -27,7 +28,7 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
 
     // Find projects linked to this repo
     let projects = sqlx::query(
-        "SELECT id FROM projects WHERE github_repo = $1",
+        "SELECT id, build_command, output_dir FROM projects WHERE github_repo = $1",
     )
     .bind(repo_full_name)
     .fetch_all(&*state.db)
@@ -40,13 +41,16 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         let preview_url = format!("{}-{}.{}", preview_hash, "preview", state.config.base_domain);
 
         let project_id: Uuid = project.try_get("id")?;
+        let build_command: Option<String> = project.try_get("build_command").ok().flatten();
+        let output_dir: Option<String> = project.try_get("output_dir").ok().flatten();
         tracing::info!(project_id = %project_id, "triggering deployment");
 
-        sqlx::query(
+        let deployment = sqlx::query_as::<_, crate::models::Deployment>(
             r#"
             INSERT INTO deployments
                 (project_id, commit_sha, commit_message, branch, state, url, is_production)
-            VALUES ($1, $2, $3, $4, 'queued', $5, false)
+            VALUES ($1, $2, $3, $4, 'queued', $5, true)
+            RETURNING *
             "#,
         )
         .bind(project_id)
@@ -54,10 +58,52 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         .bind(commit_message)
         .bind(branch)
         .bind(preview_url)
-        .execute(&*state.db)
+        .fetch_one(&*state.db)
         .await?;
 
-        // TODO: dispatch to build queue (NATS / internal channel)
+        // Fetch env vars from projects.env_vars JSONB column
+        let env_vars_json: serde_json::Value = sqlx::query_scalar(
+            "SELECT env_vars FROM projects WHERE id = $1",
+        )
+        .bind(project_id)
+        .fetch_one(&*state.db)
+        .await?;
+
+        let env_vars: HashMap<String, String> = env_vars_json
+            .as_object()
+            .map(|obj| {
+                obj.iter()
+                    .filter_map(|(k, v)| {
+                        v.as_str().map(|s| (k.clone(), s.to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Dispatch build job via NATS JetStream
+        let git_url = format!("https://github.com/{}.git", repo_full_name);
+
+        let build_job = BuildJob {
+            deployment_id: deployment.id,
+            project_id,
+            git_url,
+            commit_sha: commit_sha.to_string(),
+            branch: branch.to_string(),
+            build_command,
+            output_dir,
+            github_token: None,
+            env_vars,
+        };
+
+        state.nats.publish_job(&build_job).await?;
+
+        tracing::info!(
+            deployment_id = %deployment.id,
+            commit = %commit_sha,
+            repo = %repo_full_name,
+            env_var_count = build_job.env_vars.len(),
+            "build job published to NATS from webhook"
+        );
     }
 
     Ok(())

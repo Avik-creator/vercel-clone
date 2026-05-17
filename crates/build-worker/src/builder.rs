@@ -89,10 +89,10 @@ async fn detect_runtime(repo_path: &Path) -> &'static str {
     let cargo_toml = repo_path.join("Cargo.toml");
 
     if package_json.exists() {
-        "node:20-alpine"
+        "node:22-alpine"
     } else if cargo_toml.exists() {
         "rust:slim"
     } else {
-        "node:20-alpine"
+        "node:22-alpine"
     }
 }
