@@ -7,6 +7,7 @@ use crate::{
     errors::{AppError, AppResult, NotFoundExt},
     models::{BuildCallbackRequest, BuildJob, CreateDeploymentRequest, Deployment, DeploymentState, EnvVarTarget},
     services::projects as project_service,
+    services::github as github_service,
 };
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Deployment>> {
@@ -70,6 +71,20 @@ pub async fn create(
 
     let _project_id: Uuid = project.try_get("id")?;
     let github_repo: Option<String> = project.try_get("github_repo")?;
+    let github_installation_id: Option<i64> = project.try_get("github_installation_id").ok().flatten();
+
+    // Get installation token for cloning private repos
+    let github_token = if let Some(inst_id) = github_installation_id {
+        match github_service::get_installation_token(state, inst_id).await {
+            Ok(token) => Some(token),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to get installation token, repo clone may fail for private repos");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Generate random short hash for preview URL (like Vercel does)
     let preview_hash: String = (0..8)
@@ -117,7 +132,7 @@ pub async fn create(
         branch: req.branch.clone(),
         build_command: project.try_get("build_command").ok().flatten(),
         output_dir: project.try_get("output_dir").ok().flatten(),
-        github_token: None,
+        github_token,
         env_vars,
     };
 

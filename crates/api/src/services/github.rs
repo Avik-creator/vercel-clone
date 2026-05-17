@@ -4,6 +4,26 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use crate::{AppState, errors::{AppError, AppResult}, models::BuildJob};
 
+/// Generate an installation access token for cloning private repos
+pub async fn get_installation_token(state: &AppState, installation_id: i64) -> AppResult<String> {
+    let octocrab = octocrab::OctocrabBuilder::new()
+        .app(
+            state.config.github_app_id.into(),
+            jsonwebtoken::EncodingKey::from_rsa_pem(state.config.github_app_private_key.as_bytes())
+                .map_err(|e| AppError::Internal(anyhow::anyhow!("invalid github app private key: {e}")))?,
+        )
+        .build()
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("octocrab build failed: {e}")))?;
+
+    let token = octocrab
+        .installation(installation_id.try_into().unwrap())
+        .installation_access_token()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to get installation token: {e}")))?;
+
+    Ok(token.token)
+}
+
 /// push event → trigger a deployment for the linked project
 pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
     let repo_full_name = payload["repository"]["full_name"]
@@ -19,12 +39,27 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         .as_str()
         .unwrap_or("")
         .trim_start_matches("refs/heads/");
+    let installation_id = payload["installation"]["id"]
+        .as_i64();
 
     if branch.is_empty() {
         return Err(AppError::BadRequest("missing branch ref in webhook payload".into()));
     }
 
     tracing::info!(repo = %repo_full_name, sha = %commit_sha, branch = %branch, "push event");
+
+    // Get installation token for cloning private repos
+    let github_token = if let Some(inst_id) = installation_id {
+        match get_installation_token(state, inst_id).await {
+            Ok(token) => Some(token),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to get installation token, repo clone may fail for private repos");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // Find projects linked to this repo
     let projects = sqlx::query(
@@ -91,7 +126,7 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
             branch: branch.to_string(),
             build_command,
             output_dir,
-            github_token: None,
+            github_token: github_token.clone(),
             env_vars,
         };
 
