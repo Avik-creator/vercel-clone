@@ -28,6 +28,7 @@ CREATE TABLE projects (
     build_command           TEXT NOT NULL DEFAULT 'npm run build',
     output_dir              TEXT NOT NULL DEFAULT 'dist',
     root_dir                TEXT,
+    production_branch       TEXT NOT NULL DEFAULT 'main',
     env_vars                JSONB NOT NULL DEFAULT '{}',
     created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),

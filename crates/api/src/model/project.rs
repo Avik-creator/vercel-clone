@@ -16,6 +16,7 @@ pub struct Project {
     pub build_command: Option<String>,
     pub output_dir: Option<String>,
     pub root_dir: Option<String>,
+    pub production_branch: String,
     pub env_vars: serde_json::Value,   // encrypted JSON blob
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -55,6 +56,7 @@ pub struct CreateProjectRequest {
     pub framework: Option<String>,
     pub build_command: Option<String>,
     pub output_dir: Option<String>,
+    pub production_branch: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,4 +65,5 @@ pub struct UpdateProjectRequest {
     pub build_command: Option<String>,
     pub output_dir: Option<String>,
     pub root_dir: Option<String>,
+    pub production_branch: Option<String>,
 }

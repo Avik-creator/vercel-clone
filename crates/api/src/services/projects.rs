@@ -26,8 +26,8 @@ pub async fn create(
         r#"
         INSERT INTO projects
             (owner_id, name, slug, github_repo, framework,
-             build_command, output_dir, env_vars)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, '[]')
+             build_command, output_dir, production_branch, env_vars)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '[]')
         RETURNING *
         "#
     )
@@ -38,6 +38,7 @@ pub async fn create(
     .bind(&req.framework)
     .bind(req.build_command.as_deref().unwrap_or("npm run build"))
     .bind(req.output_dir.as_deref().unwrap_or("dist"))
+    .bind(req.production_branch.as_deref().unwrap_or("main"))
     .fetch_one(&*state.db)
     .await?;
 
@@ -71,11 +72,12 @@ pub async fn update(
     let project = sqlx::query_as::<_, Project>(
         r#"
         UPDATE projects SET
-            name         = COALESCE($3, name),
-            build_command = COALESCE($4, build_command),
-            output_dir   = COALESCE($5, output_dir),
-            root_dir     = COALESCE($6, root_dir),
-            updated_at   = NOW()
+            name              = COALESCE($3, name),
+            build_command     = COALESCE($4, build_command),
+            output_dir        = COALESCE($5, output_dir),
+            root_dir          = COALESCE($6, root_dir),
+            production_branch = COALESCE($7, production_branch),
+            updated_at        = NOW()
         WHERE id = $1 AND owner_id = $2
         RETURNING *
         "#
@@ -86,6 +88,7 @@ pub async fn update(
     .bind(req.build_command)
     .bind(req.output_dir)
     .bind(req.root_dir)
+    .bind(req.production_branch)
     .fetch_one(&*state.db)
     .await?;
 

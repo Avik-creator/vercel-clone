@@ -1,0 +1,1 @@
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS production_branch TEXT NOT NULL DEFAULT 'main';
