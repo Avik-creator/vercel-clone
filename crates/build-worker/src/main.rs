@@ -61,7 +61,7 @@ async fn main() -> anyhow::Result<()> {
         };
         let _ = nats.publish_log(&log).await;
 
-        let result = match process_job(&job, &nats, &storage, &work_base, &config.docker_network).await {
+        let result = match process_job(&job, &nats, &storage, &work_base, &config.docker_network, config.build_timeout_secs).await {
             Ok(artifact_key) => {
                 tracing::info!(%deployment_id, "build succeeded");
                 BuildResult {
@@ -113,6 +113,7 @@ async fn process_job(
     storage: &storage::Storage,
     work_base: &std::path::Path,
     docker_network: &str,
+    build_timeout_secs: u64,
 ) -> anyhow::Result<String> {
     let work_dir = work_base.join(job.deployment_id.to_string());
     tokio::fs::create_dir_all(&work_dir).await?;
@@ -120,7 +121,7 @@ async fn process_job(
     let output_dir = job.output_dir.as_deref().unwrap_or("dist").to_string();
     let container_name = format!("build-{}", job.deployment_id);
 
-    builder::run_build(job, nats, docker_network).await?;
+    builder::run_build(job, nats, docker_network, std::time::Duration::from_secs(build_timeout_secs)).await?;
 
     let log = LogLine {
         deployment_id: job.deployment_id,

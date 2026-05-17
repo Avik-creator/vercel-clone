@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, sqlx::Type)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, sqlx::Type)]
 #[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "deployment_state", rename_all = "lowercase")]
 pub enum DeploymentState {
@@ -28,6 +28,7 @@ pub struct Deployment {
     /// Whether this is the production deployment
     pub is_production: bool,
     pub build_log: Option<String>,
+    pub artifact_key: Option<String>,
     pub build_started_at: Option<DateTime<Utc>>,
     pub build_finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -47,5 +48,5 @@ pub struct BuildCallbackRequest {
     pub deployment_id: Uuid,
     pub state: DeploymentState,
     pub log_chunk: Option<String>,
-    pub artifact_url: Option<String>,
+    pub artifact_key: Option<String>,
 }

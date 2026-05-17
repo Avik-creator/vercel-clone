@@ -228,11 +228,24 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
 
     let _ = log_update;
 
+    let current_state = sqlx::query_scalar::<_, DeploymentState>(
+        "SELECT state FROM deployments WHERE id = $1",
+    )
+    .bind(req.deployment_id)
+    .fetch_one(&*state.db)
+    .await
+    .or_not_found("deployment")?;
+
+    if !is_valid_transition(current_state, req.state.clone()) {
+        return Err(AppError::BadRequest("invalid deployment state transition".into()));
+    }
+
     let state_val = req.state.clone();
     sqlx::query(
         r#"
         UPDATE deployments SET
             state = $2,
+            artifact_key = COALESCE($3, artifact_key),
             build_started_at  = CASE WHEN $2::text = 'building' THEN NOW() ELSE build_started_at END,
             build_finished_at = CASE WHEN $2::text IN ('ready', 'error') THEN NOW() ELSE build_finished_at END,
             updated_at = NOW()
@@ -241,6 +254,7 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
     )
     .bind(req.deployment_id)
     .bind(req.state)
+    .bind(artifact_key_for_update(&req))
     .execute(&*state.db)
     .await?;
 
@@ -251,4 +265,43 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
     );
 
     Ok(())
+}
+
+fn artifact_key_for_update(req: &BuildCallbackRequest) -> Option<&str> {
+    req.artifact_key.as_deref()
+}
+
+fn is_valid_transition(from: DeploymentState, to: DeploymentState) -> bool {
+    use DeploymentState::*;
+
+    match from {
+        Queued => matches!(to, Queued | Building | Error | Cancelled),
+        Building => matches!(to, Building | Uploading | Ready | Error | Cancelled),
+        Uploading => matches!(to, Uploading | Ready | Error | Cancelled),
+        Ready | Error | Cancelled => from == to,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ready_callback_persists_artifact_key() {
+        let req = BuildCallbackRequest {
+            deployment_id: Uuid::nil(),
+            state: DeploymentState::Ready,
+            log_chunk: None,
+            artifact_key: Some("deployments/abc".to_string()),
+        };
+
+        assert_eq!(artifact_key_for_update(&req), Some("deployments/abc"));
+    }
+
+    #[test]
+    fn terminal_deployments_cannot_reenter_building() {
+        assert!(!is_valid_transition(DeploymentState::Cancelled, DeploymentState::Building));
+        assert!(!is_valid_transition(DeploymentState::Ready, DeploymentState::Building));
+        assert!(is_valid_transition(DeploymentState::Queued, DeploymentState::Building));
+    }
 }

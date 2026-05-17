@@ -134,17 +134,18 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             let update_result = match result.state {
                 crate::models::DeploymentState::Ready => {
                     sqlx::query(
-                        "UPDATE deployments SET state = 'ready', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2 WHERE id = $3",
+                        "UPDATE deployments SET state = 'ready', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2, artifact_key = COALESCE($3, artifact_key) WHERE id = $4 AND state IN ('queued', 'building', 'uploading', 'ready')",
                     )
                     .bind(now)
                     .bind(result.log_output.as_deref().unwrap_or(""))
+                    .bind(result.artifact_key.as_deref())
                     .bind(result.deployment_id)
                     .execute(&*db)
                     .await
                 }
                 crate::models::DeploymentState::Error => {
                     sqlx::query(
-                        "UPDATE deployments SET state = 'error', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2 WHERE id = $3",
+                        "UPDATE deployments SET state = 'error', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2 WHERE id = $3 AND state IN ('queued', 'building', 'uploading', 'error')",
                     )
                     .bind(now)
                     .bind(result.error_message.as_deref().unwrap_or("unknown error"))
@@ -154,7 +155,7 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
                 }
                 crate::models::DeploymentState::Cancelled => {
                     sqlx::query(
-                        "UPDATE deployments SET state = 'cancelled', build_finished_at = $1 WHERE id = $2",
+                        "UPDATE deployments SET state = 'cancelled', build_finished_at = $1 WHERE id = $2 AND state IN ('queued', 'building', 'uploading', 'cancelled')",
                     )
                     .bind(now)
                     .bind(result.deployment_id)
