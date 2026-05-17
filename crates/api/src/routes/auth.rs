@@ -46,7 +46,7 @@ pub async fn github_oauth_redirect(
     let mut url = url::Url::parse("https://github.com/login/oauth/authorize").unwrap();
     url.query_pairs_mut()
         .append_pair("client_id", &state.config.github_client_id)
-        .append_pair("redirect_uri", &format!("{}/v1/auth/github/callback", state.config.base_domain))
+        .append_pair("redirect_uri", &format!("http://{}/v1/auth/github/callback", state.config.base_domain))
         .append_pair("scope", "read:user user:email repo");
     Redirect::to(url.as_str())
 }

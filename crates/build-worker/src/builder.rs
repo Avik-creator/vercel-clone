@@ -1,38 +1,50 @@
-use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-use crate::models::LogLine;
+use crate::models::{BuildJob, LogLine};
 use crate::nats::WorkerNats;
 
 pub async fn run_build(
-    job: &crate::models::BuildJob,
-    work_dir: &Path,
+    job: &BuildJob,
     nats: &WorkerNats,
     docker_network: &str,
 ) -> anyhow::Result<()> {
     let container_name = format!("build-{}", job.deployment_id);
 
-    let repo_path = work_dir.join("repo").canonicalize()?;
-    let repo_path_str = repo_path.to_string_lossy();
+    let node_image = detect_runtime(job).await;
 
-    let node_image = detect_runtime(&repo_path).await;
+    let git_url = if let Some(ref token) = job.github_token {
+        job.git_url.replace("https://github.com/", &format!("https://x-access-token:{}@github.com/", token))
+    } else {
+        job.git_url.clone()
+    };
+
+    let build_cmd = if let Some(ref cmd) = job.build_command {
+        cmd.clone()
+    } else {
+        "npm run build".to_string()
+    };
+
+    let full_cmd = format!(
+        "apk add --no-cache git > /dev/null 2>&1 && git clone {} /app/repo && cd /app/repo && git checkout {} && {}",
+        git_url, job.commit_sha, build_cmd
+    );
 
     let mut cmd = Command::new("docker");
     cmd.args([
-        "run", "--rm",
+        "run",
         "--name", &container_name,
         "--network", docker_network,
         "--workdir", "/app",
-        "-v", &format!("{}:/app", repo_path_str),
+        "-e", &format!("PROJECT_ID={}", job.project_id),
+        "-e", &format!("DEPLOYMENT_ID={}", job.deployment_id),
         &node_image,
+        "sh", "-c", &full_cmd,
     ]);
 
-    if let Some(ref build_cmd) = job.build_command {
-        cmd.args(["sh", "-c", build_cmd]);
-    } else {
-        cmd.args(["sh", "-c", "npm run build 2>/dev/null || cargo build --release 2>/dev/null || echo 'no build command found'"]);
+    for (key, value) in &job.env_vars {
+        cmd.arg("-e").arg(format!("{}={}", key, value));
     }
 
     cmd.stdout(Stdio::piped())
@@ -84,13 +96,8 @@ pub async fn run_build(
     Ok(())
 }
 
-async fn detect_runtime(repo_path: &Path) -> &'static str {
-    let package_json = repo_path.join("package.json");
-    let cargo_toml = repo_path.join("Cargo.toml");
-
-    if package_json.exists() {
-        "node:22-alpine"
-    } else if cargo_toml.exists() {
+async fn detect_runtime(job: &BuildJob) -> &'static str {
+    if job.build_command.as_ref().map_or(false, |c| c.contains("cargo")) {
         "rust:slim"
     } else {
         "node:22-alpine"

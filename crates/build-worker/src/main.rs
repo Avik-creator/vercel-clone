@@ -95,6 +95,13 @@ async fn main() -> anyhow::Result<()> {
 
         let work_dir = work_base.join(deployment_id.to_string());
         let _ = tokio::fs::remove_dir_all(&work_dir).await;
+
+        // Cleanup build container if still present
+        let container_name = format!("build-{}", deployment_id);
+        let _ = tokio::process::Command::new("docker")
+            .args(["rm", "-f", &container_name])
+            .output()
+            .await;
     }
 
     Ok(())
@@ -110,50 +117,36 @@ async fn process_job(
     let work_dir = work_base.join(job.deployment_id.to_string());
     tokio::fs::create_dir_all(&work_dir).await?;
 
+    let output_dir = job.output_dir.as_deref().unwrap_or("dist").to_string();
+    let container_name = format!("build-{}", job.deployment_id);
+
+    builder::run_build(job, nats, docker_network).await?;
+
     let log = LogLine {
         deployment_id: job.deployment_id,
-        line: "cloning repository".to_string(),
+        line: "build completed, extracting artifacts".to_string(),
         timestamp: chrono::Utc::now(),
     };
     let _ = nats.publish_log(&log).await;
 
-    git::clone_repo(job, &work_dir).await?;
+    // Copy build output from container to host
+    let local_output = work_dir.join("output");
+    tokio::fs::create_dir_all(&local_output).await?;
 
-    let log = LogLine {
-        deployment_id: job.deployment_id,
-        line: "repository cloned, starting build".to_string(),
-        timestamp: chrono::Utc::now(),
-    };
-    let _ = nats.publish_log(&log).await;
+    let status = tokio::process::Command::new("docker")
+        .args([
+            "cp",
+            &format!("{}:/app/repo/{}", container_name, output_dir),
+            local_output.to_str().unwrap(),
+        ])
+        .status()
+        .await?;
 
-    builder::run_build(job, &work_dir, nats, docker_network).await?;
-
-    let log = LogLine {
-        deployment_id: job.deployment_id,
-        line: "build completed, uploading artifacts".to_string(),
-        timestamp: chrono::Utc::now(),
-    };
-    let _ = nats.publish_log(&log).await;
-
-    let output_dir = job.output_dir.as_deref().unwrap_or("dist");
-    let artifact_path = work_dir.join("repo").join(output_dir);
-
-    if !artifact_path.exists() {
-        let log = LogLine {
-            deployment_id: job.deployment_id,
-            line: format!("warning: output directory '{}' not found, uploading entire repo", output_dir),
-            timestamp: chrono::Utc::now(),
-        };
-        let _ = nats.publish_log(&log).await;
+    if !status.success() {
+        anyhow::bail!("failed to extract build output from container");
     }
 
-    let upload_path = if artifact_path.exists() {
-        artifact_path
-    } else {
-        work_dir.join("repo")
-    };
-
-    let artifact_key = storage.upload_dir(job.deployment_id, &upload_path, nats).await?;
+    let artifact_key = storage.upload_dir(job.deployment_id, &local_output, nats).await?;
 
     let log = LogLine {
         deployment_id: job.deployment_id,

@@ -75,7 +75,7 @@ pub async fn handle_push(state: &AppState, payload: Value) -> AppResult<()> {
         let preview_hash: String = (0..8)
             .map(|_| format!("{:x}", rand::random::<u8>() % 16))
             .collect();
-        let preview_url = format!("{}-{}.{}", preview_hash, "preview", state.config.base_domain);
+        let preview_url = format!("http://{}-{}.{}", preview_hash, "preview", state.config.base_domain);
 
         let project_id: Uuid = project.try_get("id")?;
         let build_command: Option<String> = project.try_get("build_command").ok().flatten();
