@@ -6,7 +6,7 @@ use serde_json::Value;
 use uuid::Uuid;
 use crate::{
     AppState,
-    errors::{AppError, AppResult},
+    errors::AppResult,
     middleware::auth::AuthUser,
     models::{CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, LinkGithubRequest, UpdateEnvVarsRequest, UpdateProjectRequest},
     services::projects as project_service,

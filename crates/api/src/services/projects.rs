@@ -130,7 +130,7 @@ pub async fn update_env_vars(
     project_id: Uuid,
     env_vars: Vec<EnvVarEntry>,
 ) -> AppResult<Vec<EnvVarEntry>> {
-    let project = get_for_user(state, user_id, project_id).await?;
+    let _project = get_for_user(state, user_id, project_id).await?;
 
     let json = serde_json::to_value(&env_vars)
         .map_err(|e| crate::errors::AppError::Internal(e.into()))?;
@@ -222,7 +222,7 @@ pub async fn link_github(
     project_id: Uuid,
     req: LinkGithubRequest,
 ) -> AppResult<Project> {
-    let project = get_for_user(state, user_id, project_id).await?;
+    let _project = get_for_user(state, user_id, project_id).await?;
 
     let project = sqlx::query_as::<_, Project>(
         r#"
