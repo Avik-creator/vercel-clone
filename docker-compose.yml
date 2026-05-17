@@ -91,7 +91,7 @@ services:
     volumes:
       - nats_data:/var/lib/nats
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8222/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -183,8 +183,10 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@pgbouncer:5432/vercel_clone?sslmode=prefer
-      NATS_URL: nats://${NATS_USER:-nats}:${NATS_PASSWORD}@nats:4222
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@pgbouncer:5432/vercel_clone
+      NATS_URL: nats://nats:4222
+      NATS_USER: ${NATS_USER:-nats}
+      NATS_PASSWORD: ${NATS_PASSWORD}
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
@@ -236,7 +238,9 @@ services:
     env_file:
       - .env
     environment:
-      NATS_URL: nats://${NATS_USER:-nats}:${NATS_PASSWORD}@nats:4222
+      NATS_URL: nats://nats:4222
+      NATS_USER: ${NATS_USER:-nats}
+      NATS_PASSWORD: ${NATS_PASSWORD}
       REGISTRY_URL: localhost:5000
       BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2

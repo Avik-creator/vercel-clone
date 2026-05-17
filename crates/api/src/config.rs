@@ -31,6 +31,9 @@ pub struct AppConfig {
     #[serde(default = "default_nats_url")]
     pub nats_url: String,
 
+    pub nats_user: Option<String>,
+    pub nats_password: Option<String>,
+
     #[serde(default = "default_minio_endpoint")]
     pub minio_endpoint: String,
 

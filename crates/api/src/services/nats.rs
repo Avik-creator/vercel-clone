@@ -26,7 +26,12 @@ pub struct NatsClient {
 
 impl NatsClient {
     pub async fn connect(config: &AppConfig) -> Result<Self, AppError> {
-        let client = async_nats::connect(&config.nats_url)
+        let mut opts = async_nats::ConnectOptions::new();
+        if let (Some(user), Some(pass)) = (&config.nats_user, &config.nats_password) {
+            opts = opts.user_and_password(user.clone(), pass.clone());
+        }
+        let client = opts
+            .connect(&config.nats_url)
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to connect to NATS: {}", e)))?;
 

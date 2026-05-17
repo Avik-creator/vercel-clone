@@ -5,6 +5,9 @@ pub struct WorkerConfig {
     #[serde(default = "default_nats_url")]
     pub nats_url: String,
 
+    pub nats_user: Option<String>,
+    pub nats_password: Option<String>,
+
     #[serde(default = "default_registry_url")]
     pub registry_url: String,
 

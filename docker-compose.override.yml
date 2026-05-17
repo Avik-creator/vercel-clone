@@ -18,6 +18,9 @@ services:
   api:
     environment:
       SERVE_TLS: "false"
+      # Bypass PgBouncer locally — scram-sha-256 (Postgres 17 default) is not
+      # supported in PgBouncer transaction mode. Connect directly to Postgres.
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/vercel_clone
     labels:
       # Override the websecure router to use plain HTTP
       - "traefik.enable=true"

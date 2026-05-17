@@ -25,7 +25,11 @@ async fn main() -> anyhow::Result<()> {
     let config = config::WorkerConfig::load()?;
     tracing::info!("build worker starting");
 
-    let nats = nats::WorkerNats::connect(&config.nats_url).await?;
+    let nats = nats::WorkerNats::connect(
+        &config.nats_url,
+        config.nats_user.as_deref(),
+        config.nats_password.as_deref(),
+    ).await?;
     tracing::info!(url = %config.nats_url, "nats connected");
 
     let work_base = PathBuf::from("/tmp/builds");

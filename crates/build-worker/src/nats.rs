@@ -9,8 +9,13 @@ pub struct WorkerNats {
 }
 
 impl WorkerNats {
-    pub async fn connect(url: &str) -> anyhow::Result<Self> {
-        let client = async_nats::connect(url)
+    pub async fn connect(url: &str, user: Option<&str>, password: Option<&str>) -> anyhow::Result<Self> {
+        let mut opts = async_nats::ConnectOptions::new();
+        if let (Some(u), Some(p)) = (user, password) {
+            opts = opts.user_and_password(u.to_string(), p.to_string());
+        }
+        let client = opts
+            .connect(url)
             .await
             .map_err(|e| anyhow::anyhow!("failed to connect to NATS: {}", e))?;
 
