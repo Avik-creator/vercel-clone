@@ -20,13 +20,23 @@ pub async fn run_build(
 
     let image_ref = image_tag(registry_url, job.deployment_id);
 
-    // railpack build uses BuildKit directly (BUILDKIT_HOST env var points to the daemon).
-    // --push writes the image straight to the registry — no docker push step needed.
+    // railpack build: --name sets the image tag; there is no --push flag.
+    // BUILDKIT_HOST env var (set in docker-compose) points railpack at our BuildKit daemon.
     run_logged_command(
         "railpack build",
         Command::new("railpack")
-            .args(["build", "--tag", &image_ref, "--push", "."])
+            .args(["build", "--name", &image_ref, "."])
             .current_dir(work_dir),
+        job.deployment_id,
+        nats,
+        build_timeout,
+    )
+    .await?;
+
+    // Push the built image to the local registry.
+    run_logged_command(
+        "docker push",
+        Command::new("docker").args(["push", &image_ref]),
         job.deployment_id,
         nats,
         build_timeout,
