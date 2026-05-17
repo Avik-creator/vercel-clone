@@ -3,34 +3,35 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::process::Child;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-/// Manages running Next.js standalone server processes per deployment.
+/// Manages running Next.js standalone deployment containers.
 pub struct DeploymentServers {
-    servers: Arc<Mutex<HashMap<Uuid, RunningServer>>>,
+    /// deployment_id → container name
+    containers: Arc<Mutex<HashMap<Uuid, RunningContainer>>>,
     work_dir: PathBuf,
+    docker_network: String,
     idle_timeout_secs: u64,
 }
 
-struct RunningServer {
+struct RunningContainer {
+    name: String,
     port: u16,
-    child: Child,
     last_accessed: Instant,
 }
 
 impl DeploymentServers {
-    pub fn new(work_dir: PathBuf, idle_timeout_secs: u64) -> Self {
+    pub fn new(work_dir: PathBuf, docker_network: String, idle_timeout_secs: u64) -> Self {
         Self {
-            servers: Arc::new(Mutex::new(HashMap::new())),
+            containers: Arc::new(Mutex::new(HashMap::new())),
             work_dir,
+            docker_network,
             idle_timeout_secs,
         }
     }
 
-    /// Get or start a server for the given deployment.
-    /// Returns the port the server is listening on.
+    /// Return the local port the container is listening on, starting it if necessary.
     pub async fn get_or_start(
         &self,
         deployment_id: Uuid,
@@ -39,14 +40,14 @@ impl DeploymentServers {
         bucket: &str,
     ) -> anyhow::Result<u16> {
         {
-            let mut servers = self.servers.lock().await;
-            if let Some(server) = servers.get_mut(&deployment_id) {
-                server.last_accessed = Instant::now();
-                return Ok(server.port);
+            let mut containers = self.containers.lock().await;
+            if let Some(c) = containers.get_mut(&deployment_id) {
+                c.last_accessed = Instant::now();
+                return Ok(c.port);
             }
         }
 
-        // Download and start without holding the lock so other requests aren't blocked.
+        // Prepare files and start the container without holding the lock.
         let deploy_dir = self.work_dir.join(deployment_id.to_string());
         let standalone_dir = deploy_dir.join("standalone");
 
@@ -64,75 +65,114 @@ impl DeploymentServers {
         }
 
         let port = find_free_port()?;
-        let mut cmd = tokio::process::Command::new("node");
-        cmd.args(["server.js"])
-            .current_dir(&standalone_dir)
-            .env("NODE_ENV", "production")
-            .env("PORT", port.to_string())
-            .env("HOSTNAME", "127.0.0.1")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true);
+        let container_name = format!("serve-{}", deployment_id);
 
-        let child = cmd.spawn()?;
-        tracing::info!(%deployment_id, %port, "started next.js standalone server");
+        // Remove any stale container from a previous run.
+        let _ = tokio::process::Command::new("docker")
+            .args(["rm", "-f", &container_name])
+            .output()
+            .await;
+
+        let standalone_path = standalone_dir
+            .canonicalize()
+            .unwrap_or(standalone_dir.clone());
+
+        let status = tokio::process::Command::new("docker")
+            .args([
+                "run",
+                "-d",
+                "--name",
+                &container_name,
+                "--network",
+                &self.docker_network,
+                "-p",
+                &format!("127.0.0.1:{}:3000", port),
+                "-e",
+                "NODE_ENV=production",
+                "-e",
+                "PORT=3000",
+                "-e",
+                "HOSTNAME=0.0.0.0",
+                "-v",
+                &format!("{}:/app:ro", standalone_path.display()),
+                "--workdir",
+                "/app",
+                "node:22-alpine",
+                "node",
+                "server.js",
+            ])
+            .status()
+            .await?;
+
+        if !status.success() {
+            anyhow::bail!("failed to start deployment container for {}", deployment_id);
+        }
+
+        tracing::info!(%deployment_id, %port, container = %container_name, "started deployment container");
 
         {
-            let mut servers = self.servers.lock().await;
-            // Another request may have started it while we were downloading; prefer existing.
-            if let Some(server) = servers.get_mut(&deployment_id) {
-                server.last_accessed = Instant::now();
-                return Ok(server.port);
+            let mut containers = self.containers.lock().await;
+            // Prefer an already-started entry (race between concurrent first requests).
+            if let Some(c) = containers.get_mut(&deployment_id) {
+                c.last_accessed = Instant::now();
+                // Kill the container we just started since another one won.
+                let _ = tokio::process::Command::new("docker")
+                    .args(["rm", "-f", &container_name])
+                    .output()
+                    .await;
+                return Ok(c.port);
             }
-            servers.insert(
+            containers.insert(
                 deployment_id,
-                RunningServer {
+                RunningContainer {
+                    name: container_name,
                     port,
-                    child,
                     last_accessed: Instant::now(),
                 },
             );
         }
 
-        // Wait for the server to accept connections (up to 10 s).
-        wait_for_port(port, Duration::from_secs(10)).await?;
-
+        wait_for_port(port, Duration::from_secs(30)).await?;
         Ok(port)
     }
 
-    /// Remove and stop the server for a deployment.
+    /// Stop and remove the container for a deployment.
     pub async fn stop(&self, deployment_id: Uuid) {
-        let mut servers = self.servers.lock().await;
-        if let Some(mut server) = servers.remove(&deployment_id) {
-            let _ = server.child.start_kill();
-            tracing::info!(%deployment_id, "stopped next.js standalone server");
+        let mut containers = self.containers.lock().await;
+        if let Some(c) = containers.remove(&deployment_id) {
+            let _ = tokio::process::Command::new("docker")
+                .args(["rm", "-f", &c.name])
+                .output()
+                .await;
+            tracing::info!(%deployment_id, container = %c.name, "stopped deployment container");
         }
     }
 
-    /// Cleanup idle servers.
+    /// Kill containers that haven't served a request within the idle timeout.
     pub async fn cleanup_idle(&self) {
-        let mut servers = self.servers.lock().await;
+        let mut containers = self.containers.lock().await;
         let timeout = Duration::from_secs(self.idle_timeout_secs);
         let now = Instant::now();
 
-        let to_remove: Vec<Uuid> = servers
+        let to_remove: Vec<(Uuid, String)> = containers
             .iter()
-            .filter(|(_, s)| now.duration_since(s.last_accessed) > timeout)
-            .map(|(id, _)| *id)
+            .filter(|(_, c)| now.duration_since(c.last_accessed) > timeout)
+            .map(|(id, c)| (*id, c.name.clone()))
             .collect();
 
-        for id in to_remove {
-            if let Some(mut server) = servers.remove(&id) {
-                let _ = server.child.start_kill();
-                tracing::info!(%id, "cleaned up idle next.js server");
-            }
+        for (id, name) in to_remove {
+            containers.remove(&id);
+            let _ = tokio::process::Command::new("docker")
+                .args(["rm", "-f", &name])
+                .output()
+                .await;
+            tracing::info!(%id, container = %name, "cleaned up idle deployment container");
         }
     }
 }
 
-/// Downloads all objects under `s3_prefix` from MinIO into `local_dir`,
-/// stripping `strip_prefix` from each key to get the relative local path.
-/// Paginates through all pages — list_objects_v2 returns at most 1000 objects per call.
+/// Downloads all objects under `s3_prefix`, stripping `strip_prefix` from
+/// each key to produce the local relative path. Paginates until exhausted.
 async fn download_prefix(
     s3_client: &aws_sdk_s3::Client,
     bucket: &str,
@@ -159,7 +199,7 @@ async fn download_prefix(
 
         for obj in resp.contents.unwrap_or_default() {
             let key = match obj.key() {
-                Some(k) if !k.ends_with('/') => k, // skip zero-byte directory markers
+                Some(k) if !k.ends_with('/') => k,
                 _ => continue,
             };
 
@@ -170,14 +210,17 @@ async fn download_prefix(
                 tokio::fs::create_dir_all(parent).await?;
             }
 
-            let get_resp = s3_client
+            let bytes = s3_client
                 .get_object()
                 .bucket(bucket)
                 .key(key)
                 .send()
-                .await?;
+                .await?
+                .body
+                .collect()
+                .await?
+                .into_bytes();
 
-            let bytes = get_resp.body.collect().await?.into_bytes();
             tokio::fs::write(&local_path, &bytes).await?;
             count += 1;
         }
@@ -190,7 +233,6 @@ async fn download_prefix(
     Ok(count)
 }
 
-/// Downloads the standalone build from MinIO to local disk.
 async fn download_standalone(
     s3_client: &aws_sdk_s3::Client,
     bucket: &str,
@@ -199,28 +241,24 @@ async fn download_standalone(
 ) -> anyhow::Result<()> {
     let prefix = artifact_key.trim_end_matches('/');
 
-    // Download standalone/ → local standalone/
     let standalone_prefix = format!("{}/standalone/", prefix);
-    let standalone_dir = deploy_dir.join("standalone");
     let n = download_prefix(
         s3_client,
         bucket,
         &standalone_prefix,
         &standalone_prefix,
-        &standalone_dir,
+        &deploy_dir.join("standalone"),
     )
     .await?;
     tracing::info!(%n, "downloaded standalone files");
 
-    // Download .next/static/ → local standalone/.next/static/
     let static_prefix = format!("{}/.next/static/", prefix);
-    let static_local = standalone_dir.join(".next").join("static");
     let n = download_prefix(
         s3_client,
         bucket,
         &static_prefix,
         &static_prefix,
-        &static_local,
+        &deploy_dir.join("standalone").join(".next").join("static"),
     )
     .await?;
     tracing::info!(%n, "downloaded .next/static files");
@@ -231,8 +269,7 @@ async fn download_standalone(
 
 fn find_free_port() -> anyhow::Result<u16> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
-    let port = listener.local_addr()?.port();
-    Ok(port)
+    Ok(listener.local_addr()?.port())
 }
 
 async fn wait_for_port(port: u16, timeout: Duration) -> anyhow::Result<()> {
@@ -244,8 +281,8 @@ async fn wait_for_port(port: u16, timeout: Duration) -> anyhow::Result<()> {
             return Ok(());
         }
         if tokio::time::Instant::now() >= deadline {
-            anyhow::bail!("next.js server on port {} did not start within timeout", port);
+            anyhow::bail!("deployment container on port {} did not start within timeout", port);
         }
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
     }
 }

@@ -46,6 +46,10 @@ pub struct AppConfig {
     /// Frontend URL for OAuth redirects
     #[serde(default = "default_frontend_url")]
     pub frontend_url: String,
+
+    /// Docker network for deployment containers
+    #[serde(default = "default_docker_network")]
+    pub docker_network: String,
 }
 
 impl AppConfig {
@@ -91,4 +95,7 @@ fn default_minio_secret_key() -> String {
 }
 fn default_frontend_url() -> String {
     "http://localhost:3000".into()
+}
+fn default_docker_network() -> String {
+    "vercel-clone_default".into()
 }

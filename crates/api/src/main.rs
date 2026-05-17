@@ -87,6 +87,7 @@ async fn main() -> anyhow::Result<()> {
         storage,
         deployment_servers: Arc::new(DeploymentServers::new(
             PathBuf::from("/tmp/deployments"),
+            config.docker_network.clone(),
             300, // 5 minutes idle timeout
         )),
     };
