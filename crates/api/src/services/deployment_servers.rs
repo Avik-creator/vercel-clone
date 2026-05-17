@@ -21,7 +21,12 @@ struct RunningContainer {
 }
 
 impl DeploymentServers {
-    pub fn new(work_dir: PathBuf, docker_network: String, idle_timeout_secs: u64, serve_tls: bool) -> Self {
+    pub fn new(
+        work_dir: PathBuf,
+        docker_network: String,
+        idle_timeout_secs: u64,
+        serve_tls: bool,
+    ) -> Self {
         Self {
             containers: Arc::new(Mutex::new(HashMap::new())),
             work_dir,
@@ -53,44 +58,39 @@ impl DeploymentServers {
 
         let router_name = format!("serve-{}", deployment_id.simple());
         let entrypoint = if self.serve_tls { "websecure" } else { "web" };
-        let mut docker_args = vec![
-            "run".to_string(),
-            "-d".to_string(),
-            "--name".to_string(), container_name.clone(),
-            "--network".to_string(), self.docker_network.clone(),
-            "--cpus".to_string(), "0.5".to_string(),
-            "--memory".to_string(), "512m".to_string(),
-            "--pids-limit".to_string(), "512".to_string(),
-            "--cap-drop".to_string(), "ALL".to_string(),
-            "--security-opt".to_string(), "no-new-privileges".to_string(),
-            "-e".to_string(), "PORT=3000".to_string(),
-            "-l".to_string(), "traefik.enable=true".to_string(),
-            "-l".to_string(), format!("traefik.docker.network={}", self.docker_network),
-            "-l".to_string(), format!("traefik.http.routers.{}.rule=Host(`{}`)", router_name, host),
-            "-l".to_string(), format!("traefik.http.routers.{}.entrypoints={}", router_name, entrypoint),
+
+        let mut args: Vec<String> = vec![
+            "run".into(),
+            "-d".into(),
+            "--name".into(), container_name.clone(),
+            "--network".into(), self.docker_network.clone(),
+            "--cpus".into(), "0.5".into(),
+            "--memory".into(), "512m".into(),
+            "--pids-limit".into(), "512".into(),
+            "--cap-drop".into(), "ALL".into(),
+            "--security-opt".into(), "no-new-privileges".into(),
+            "-e".into(), "PORT=3000".into(),
+            "-l".into(), "traefik.enable=true".into(),
+            "-l".into(), format!("traefik.docker.network={}", self.docker_network),
+            "-l".into(), format!("traefik.http.routers.{}.rule=Host(`{}`)", router_name, host),
+            "-l".into(), format!("traefik.http.routers.{}.entrypoints={}", router_name, entrypoint),
         ];
+
         if self.serve_tls {
-            docker_args.extend([
-                "-l".to_string(),
+            args.extend([
+                "-l".into(),
                 format!("traefik.http.routers.{}.tls.certresolver=letsencrypt", router_name),
             ]);
         }
-        docker_args.extend([
-            "-l".to_string(), format!("traefik.http.services.{}.loadbalancer.server.port=3000", router_name),
-            image_ref.to_string(),
+
+        args.extend([
+            "-l".into(),
+            format!("traefik.http.services.{}.loadbalancer.server.port=3000", router_name),
+            image_ref.into(),
         ]);
+
         let status = tokio::process::Command::new("docker")
-            .args(&docker_args)
-            .status()
-            .await?;
-        // (replaced inline args block below — see docker_args above)
-        let _ = (
-                "-l",
-                &format!("traefik.http.routers.{}.tls.certresolver=letsencrypt", router_name),
-                "-l",
-                &format!("traefik.http.services.{}.loadbalancer.server.port=3000", router_name),
-                image_ref,
-            ])
+            .args(&args)
             .status()
             .await?;
 
@@ -109,7 +109,7 @@ impl DeploymentServers {
             },
         );
 
-        tracing::info!(%deployment_id, container = %container_name, host = %host, "started deployment container");
+        tracing::info!(%deployment_id, container = %container_name, %host, %entrypoint, "started deployment container");
         Ok(())
     }
 
