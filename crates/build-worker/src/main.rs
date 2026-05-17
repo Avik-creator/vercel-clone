@@ -262,42 +262,50 @@ async fn detect_output_type(
     container_name: &str,
     configured_output_dir: Option<&str>,
 ) -> anyhow::Result<OutputType> {
-    // Check for Next.js standalone output first (highest priority)
-    let standalone_check = tokio::process::Command::new("docker")
+    // docker cp works on stopped containers; use it to probe for files.
+    // `docker cp {container}:{path} -` exits 0 if the path exists, non-zero otherwise.
+    let standalone_exists = tokio::process::Command::new("docker")
         .args([
-            "exec",
-            container_name,
-            "sh",
-            "-c",
-            "test -f /app/repo/.next/standalone/server.js && echo yes || echo no",
+            "cp",
+            &format!("{}:/app/repo/.next/standalone/server.js", container_name),
+            "-",
         ])
-        .output()
-        .await?;
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await?
+        .success();
 
-    if String::from_utf8_lossy(&standalone_check.stdout).trim() == "yes" {
+    if standalone_exists {
         return Ok(OutputType::Standalone);
     }
 
-    // Use configured output_dir if provided, otherwise auto-detect
+    // Use configured output_dir if provided, otherwise auto-detect.
     if let Some(dir) = configured_output_dir {
         return Ok(OutputType::Static(dir.to_string()));
     }
 
-    // Auto-detect common static output directories
-    let detect_cmd =
-        "if [ -d /app/repo/out ]; then echo out; elif [ -d /app/repo/build ]; then echo build; elif [ -d /app/repo/dist ]; then echo dist; elif [ -d /app/repo/.next ]; then echo .next; else echo dist; fi";
+    // Auto-detect: try common static output dirs in priority order.
+    for dir in &["out", "build", "dist", ".next"] {
+        let exists = tokio::process::Command::new("docker")
+            .args([
+                "cp",
+                &format!("{}:/app/repo/{}/.", container_name, dir),
+                "-",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
 
-    let output = tokio::process::Command::new("docker")
-        .args(["exec", container_name, "sh", "-c", detect_cmd])
-        .output()
-        .await?;
+        if exists {
+            return Ok(OutputType::Static(dir.to_string()));
+        }
+    }
 
-    let detected = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    Ok(OutputType::Static(if detected.is_empty() {
-        "dist".to_string()
-    } else {
-        detected
-    }))
+    Ok(OutputType::Static("dist".to_string()))
 }
 
 async fn docker_cp(container: &str, src: &str, dest: &std::path::Path) -> anyhow::Result<()> {
