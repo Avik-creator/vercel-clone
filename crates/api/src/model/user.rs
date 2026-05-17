@@ -12,6 +12,8 @@ pub struct User {
     /// GitHub user ID if linked
     pub github_id: Option<i64>,
     pub github_login: Option<String>,
+    #[serde(skip_serializing)]
+    pub github_access_token: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

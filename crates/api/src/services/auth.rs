@@ -140,12 +140,13 @@ pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthRespons
 
     let user = sqlx::query_as::<_, User>(
         r#"
-        INSERT INTO users (email, name, github_id, github_login, created_at, updated_at)
-        VALUES ($1, $2, $3, $4, NOW(), NOW())
+        INSERT INTO users (email, name, github_id, github_login, github_access_token, created_at, updated_at)
+        VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
         ON CONFLICT (email)
         DO UPDATE SET
             github_id = EXCLUDED.github_id,
             github_login = EXCLUDED.github_login,
+            github_access_token = EXCLUDED.github_access_token,
             updated_at = NOW()
         RETURNING *
         "#
@@ -154,6 +155,7 @@ pub async fn github_oauth(state: &AppState, code: &str) -> AppResult<AuthRespons
     .bind(&name)
     .bind(github_id)
     .bind(&github_login)
+    .bind(access_token)
     .fetch_one(&*state.db)
     .await?;
 

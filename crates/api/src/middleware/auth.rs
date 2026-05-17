@@ -24,6 +24,12 @@ pub struct Claims {
     pub iat: i64,
 }
 
+// Query params for token (used by SSE endpoints)
+#[derive(Debug, Deserialize)]
+struct TokenQuery {
+    token: Option<String>,
+}
+
 pub struct AuthUser(pub User);
 
 impl FromRequestParts<AppState> for AuthUser {
@@ -33,6 +39,7 @@ impl FromRequestParts<AppState> for AuthUser {
     req: &mut Parts,
     state: &AppState,
   ) -> Result<Self, Self::Rejection> {
+    // First try Authorization header
     if let Ok(TypedHeader(Authorization(bearer))) =
             req.extract::<TypedHeader<Authorization<Bearer>>>().await
         {
@@ -45,6 +52,16 @@ impl FromRequestParts<AppState> for AuthUser {
 
             return authenticate_jwt(token, state).await;
         }
+
+    // Fallback to query parameter (for SSE endpoints)
+    if let Ok(axum::extract::Query(query)) = req.extract::<axum::extract::Query<TokenQuery>>().await {
+        if let Some(token) = query.token {
+            if token.starts_with("cp_") {
+                return authenticate_api_key(&token, state).await;
+            }
+            return authenticate_jwt(&token, state).await;
+        }
+    }
 
     Err(AppError::Unauthorized("missing authorization header".into()))
   }
@@ -79,7 +96,7 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
     let row = sqlx::query(
         r#"
         SELECT ak.id as api_key_id, ak.key_hash, ak.expires_at, u.id as user_id,
-               u.email, u.name, u.github_id, u.github_login,
+               u.email, u.name, u.github_id, u.github_login, u.github_access_token,
                u.password_hash, u.created_at, u.updated_at
         FROM api_keys ak
         JOIN users u ON ak.user_id = u.id
@@ -103,6 +120,7 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
     let github_id: Option<i64> = row.try_get("github_id")?;
     let github_login: Option<String> = row.try_get("github_login")?;
     let password_hash: Option<String> = row.try_get("password_hash")?;
+    let github_access_token: Option<String> = row.try_get("github_access_token")?;
     let created_at: chrono::DateTime<chrono::Utc> = row.try_get("created_at")?;
     let updated_at: chrono::DateTime<chrono::Utc> = row.try_get("updated_at")?;
 
@@ -138,6 +156,7 @@ async fn authenticate_api_key(token: &str, state: &AppState) -> Result<AuthUser,
         password_hash,
         github_id,
         github_login,
+        github_access_token,
         created_at,
         updated_at,
     };

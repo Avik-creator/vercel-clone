@@ -7,7 +7,8 @@ use serde::Deserialize;
 use crate::{
     AppState,
     errors::{AppError, AppResult},
-    models::{AuthResponse, CreateUserRequest, LoginRequest},
+    middleware::auth::AuthUser,
+    models::{AuthResponse, CreateUserRequest, LoginRequest, User},
     services::auth as auth_service,
 };
 
@@ -46,7 +47,7 @@ pub async fn github_oauth_redirect(
     url.query_pairs_mut()
         .append_pair("client_id", &state.config.github_client_id)
         .append_pair("redirect_uri", &format!("{}/v1/auth/github/callback", state.config.base_domain))
-        .append_pair("scope", "read:user user:email");
+        .append_pair("scope", "read:user user:email repo");
     Redirect::to(url.as_str())
 }
 
@@ -57,4 +58,20 @@ pub async fn github_oauth_callback(
     let resp = auth_service::github_oauth(&state, &query.code).await?;
     let redirect_url = format!("{}/auth/callback?token={}", state.config.frontend_url, resp.token);
     Ok(Redirect::to(&redirect_url))
+}
+
+pub async fn me(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+) -> AppResult<Json<User>> {
+    // The AuthUser middleware already fetched the user from the token
+    // Return the current user
+    let user = sqlx::query_as::<_, User>(
+        "SELECT * FROM users WHERE id = $1"
+    )
+    .bind(user.id)
+    .fetch_one(&*state.db)
+    .await?;
+    
+    Ok(Json(user))
 }
