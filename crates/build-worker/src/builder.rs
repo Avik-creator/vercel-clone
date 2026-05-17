@@ -13,47 +13,20 @@ pub async fn run_build(
     nats: &WorkerNats,
     work_dir: &Path,
     registry_url: &str,
-    build_network: &str,
+    _build_network: &str,
     build_timeout: Duration,
 ) -> anyhow::Result<String> {
     clone_repo(job, work_dir, nats).await?;
-    run_logged_command(
-        "railpack",
-        Command::new("railpack")
-            .args(["generate", "--output", "Dockerfile.railpack"])
-            .current_dir(work_dir),
-        job.deployment_id,
-        nats,
-        build_timeout,
-    )
-    .await?;
 
     let image_ref = image_tag(registry_url, job.deployment_id);
-    run_logged_command(
-        "docker build",
-        Command::new("docker")
-            .args([
-                "build",
-                "--network",
-                build_network,
-                "--memory",
-                "4g",
-                "-f",
-                "Dockerfile.railpack",
-                "-t",
-                &image_ref,
-                ".",
-            ])
-            .current_dir(work_dir),
-        job.deployment_id,
-        nats,
-        build_timeout,
-    )
-    .await?;
 
+    // railpack build uses BuildKit directly (BUILDKIT_HOST env var points to the daemon).
+    // --push writes the image straight to the registry — no docker push step needed.
     run_logged_command(
-        "docker push",
-        Command::new("docker").args(["push", &image_ref]),
+        "railpack build",
+        Command::new("railpack")
+            .args(["build", "--tag", &image_ref, "--push", "."])
+            .current_dir(work_dir),
         job.deployment_id,
         nats,
         build_timeout,
