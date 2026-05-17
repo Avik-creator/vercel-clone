@@ -19,10 +19,14 @@ RUN cargo chef cook --release -p vercel-clone-api --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --locked -p vercel-clone-api
 
-# --- runtime: minimal image, no Rust toolchain ---
+# --- runtime: minimal image with Node.js for serving standalone Next.js apps ---
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 && \
+    ca-certificates libssl3 curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get purge -y curl gnupg && \
+    apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
