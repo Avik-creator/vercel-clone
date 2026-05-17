@@ -50,6 +50,9 @@ pub struct AppConfig {
     /// Docker network for deployment containers
     #[serde(default = "default_docker_network")]
     pub docker_network: String,
+
+    #[serde(default = "default_serve_network")]
+    pub serve_network: String,
 }
 
 impl AppConfig {
@@ -98,4 +101,7 @@ fn default_frontend_url() -> String {
 }
 fn default_docker_network() -> String {
     "vercel-clone_default".into()
+}
+fn default_serve_network() -> String {
+    "vercel-clone_serve-net".into()
 }

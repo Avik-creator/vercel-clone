@@ -23,6 +23,7 @@ pub struct BuildResult {
     pub deployment_id: Uuid,
     pub state: DeploymentState,
     pub artifact_key: Option<String>,
+    pub image_ref: Option<String>,
     pub log_output: Option<String>,
     pub error_message: Option<String>,
 }

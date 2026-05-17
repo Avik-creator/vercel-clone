@@ -24,6 +24,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - traefik_acme:/letsencrypt
+    networks:
+      - default
+      - serve-net
     deploy:
       resources:
         limits:
@@ -100,6 +103,20 @@ services:
           cpus: '1.0'
           memory: 1G
 
+  registry:
+    image: registry:2
+    container_name: vercel-clone-registry
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    volumes:
+      - registry_data:/var/lib/registry
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
   api:
     build:
       context: .
@@ -113,6 +130,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      registry:
+        condition: service_started
     expose:
       - "8080"
     ports:
@@ -130,6 +149,7 @@ services:
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: deployments
       DOCKER_NETWORK: vercel-clone_default
+      SERVE_NETWORK: vercel-clone_serve-net
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -143,6 +163,7 @@ services:
           memory: 512M
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=vercel-clone_default"
       - "traefik.http.services.api.loadbalancer.server.port=8080"
 
       # REST API — api.localhost goes to the API
@@ -152,12 +173,9 @@ services:
       - "traefik.http.routers.api.priority=30"
       - "traefik.http.routers.api.tls.certresolver=letsencrypt"
 
-      # Preview deployments — *.localhost catch-all also goes to the API.
-      - "traefik.http.routers.serve.rule=HostRegexp(`[a-z0-9-]+\\.localhost`)"
-      - "traefik.http.routers.serve.entrypoints=websecure"
-      - "traefik.http.routers.serve.service=api"
-      - "traefik.http.routers.serve.priority=10"
-      - "traefik.http.routers.serve.tls.certresolver=letsencrypt"
+    networks:
+      - default
+      - serve-net
 
   worker:
     build:
@@ -167,8 +185,8 @@ services:
     depends_on:
       nats:
         condition: service_healthy
-      minio:
-        condition: service_healthy
+      registry:
+        condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - worker_tmp:/tmp/builds
@@ -176,11 +194,7 @@ services:
       - .env
     environment:
       NATS_URL: nats://${NATS_USER:-nats}:${NATS_PASSWORD}@nats:4222
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
-      MINIO_BUCKET: deployments
-      DOCKER_NETWORK: vercel-clone_default
+      REGISTRY_URL: localhost:5000
       MAX_CONCURRENT_BUILDS: 2
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/worker-alive || exit 1"]
@@ -200,3 +214,10 @@ volumes:
   minio_data:
   worker_tmp:
   traefik_acme:
+  registry_data:
+
+networks:
+  default:
+    name: vercel-clone_default
+  serve-net:
+    name: vercel-clone_serve-net

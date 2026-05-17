@@ -29,34 +29,6 @@ pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Dep
     Ok(rows)
 }
 
-pub fn artifact_object_key(artifact_prefix: &str, request_path: &str) -> String {
-    let prefix = artifact_prefix
-        .trim_start_matches('/')
-        .trim_end_matches('/');
-    let path = request_path.trim_start_matches('/');
-
-    if path.is_empty() {
-        return format!("{}/index.html", prefix);
-    }
-
-    // Next.js serves static assets under /_next/ in URLs but stores them as
-    // .next/ on disk (and therefore in MinIO). Map the URL prefix accordingly.
-    let storage_path = if let Some(rest) = path.strip_prefix("_next/") {
-        format!(".next/{}", rest)
-    } else {
-        path.to_string()
-    };
-
-    format!("{}/{}", prefix, storage_path)
-}
-
-/// Returns true when the request path is a Next.js static asset that must be
-/// served from MinIO and should NOT be proxied to the standalone Node server.
-pub fn is_nextjs_static_asset(request_path: &str) -> bool {
-    let path = request_path.trim_start_matches('/');
-    path.starts_with("_next/static/")
-}
-
 pub async fn list_for_project(
     state: &AppState,
     user_id: Uuid,
@@ -287,6 +259,7 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
         UPDATE deployments SET
             state = $2,
             artifact_key = COALESCE($3, artifact_key),
+            image_ref = COALESCE($4, image_ref),
             build_started_at  = CASE WHEN $2::text = 'building' THEN NOW() ELSE build_started_at END,
             build_finished_at = CASE WHEN $2::text IN ('ready', 'error') THEN NOW() ELSE build_finished_at END,
             updated_at = NOW()
@@ -296,6 +269,7 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
     .bind(req.deployment_id)
     .bind(req.state)
     .bind(artifact_key_for_update(&req))
+    .bind(image_ref_for_update(&req))
     .execute(&*state.db)
     .await?;
 
@@ -310,6 +284,10 @@ pub async fn handle_build_callback(state: &AppState, req: BuildCallbackRequest) 
 
 fn artifact_key_for_update(req: &BuildCallbackRequest) -> Option<&str> {
     req.artifact_key.as_deref()
+}
+
+fn image_ref_for_update(req: &BuildCallbackRequest) -> Option<&str> {
+    req.image_ref.as_deref()
 }
 
 fn is_valid_transition(from: DeploymentState, to: DeploymentState) -> bool {
@@ -334,9 +312,14 @@ mod tests {
             state: DeploymentState::Ready,
             log_chunk: None,
             artifact_key: Some("deployments/abc".to_string()),
+            image_ref: Some("localhost:5000/deployment-abc:latest".to_string()),
         };
 
         assert_eq!(artifact_key_for_update(&req), Some("deployments/abc"));
+        assert_eq!(
+            image_ref_for_update(&req),
+            Some("localhost:5000/deployment-abc:latest")
+        );
     }
 
     #[test]
@@ -355,26 +338,4 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn artifact_serving_defaults_to_index_html() {
-        assert_eq!(
-            artifact_object_key("deployment-id/", "/"),
-            "deployment-id/index.html"
-        );
-        assert_eq!(
-            artifact_object_key("deployment-id/", "/assets/app.js"),
-            "deployment-id/assets/app.js"
-        );
-        // /_next/ URLs map to .next/ keys in MinIO
-        assert_eq!(
-            artifact_object_key("deployment-id/", "/_next/static/css/app.css"),
-            "deployment-id/.next/static/css/app.css"
-        );
-        assert_eq!(
-            is_nextjs_static_asset("/_next/static/chunks/main.js"),
-            true
-        );
-        assert_eq!(is_nextjs_static_asset("/_next/data/foo.json"), false);
-        assert_eq!(is_nextjs_static_asset("/about"), false);
-    }
 }

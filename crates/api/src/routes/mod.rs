@@ -53,6 +53,5 @@ pub fn router(state: AppState) -> Router {
             "/internal/builds/callback",
             post(deployments::build_callback),
         )
-        .fallback(deployments::serve_artifact)
         .with_state(state)
 }

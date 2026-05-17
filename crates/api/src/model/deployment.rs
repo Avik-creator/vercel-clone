@@ -29,6 +29,7 @@ pub struct Deployment {
     pub is_production: bool,
     pub build_log: Option<String>,
     pub artifact_key: Option<String>,
+    pub image_ref: Option<String>,
     pub build_started_at: Option<DateTime<Utc>>,
     pub build_finished_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
@@ -49,4 +50,5 @@ pub struct BuildCallbackRequest {
     pub state: DeploymentState,
     pub log_chunk: Option<String>,
     pub artifact_key: Option<String>,
+    pub image_ref: Option<String>,
 }

@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
@@ -10,14 +11,55 @@ use crate::nats::WorkerNats;
 pub async fn run_build(
     job: &BuildJob,
     nats: &WorkerNats,
-    docker_network: &str,
+    work_dir: &Path,
+    registry_url: &str,
     build_timeout: Duration,
-) -> anyhow::Result<()> {
-    let container_name = format!("build-{}", job.deployment_id);
+) -> anyhow::Result<String> {
+    clone_repo(job, work_dir, nats).await?;
+    run_logged_command(
+        "railpack",
+        Command::new("railpack")
+            .args(["generate", "--output", "Dockerfile.railpack"])
+            .current_dir(work_dir),
+        job.deployment_id,
+        nats,
+        build_timeout,
+    )
+    .await?;
 
-    let node_image = detect_runtime(job).await;
-    let is_node_runtime = node_image.starts_with("node:");
+    let image_ref = image_tag(registry_url, job.deployment_id);
+    run_logged_command(
+        "docker build",
+        Command::new("docker")
+            .args(["build", "-f", "Dockerfile.railpack", "-t", &image_ref, "."])
+            .current_dir(work_dir),
+        job.deployment_id,
+        nats,
+        build_timeout,
+    )
+    .await?;
 
+    run_logged_command(
+        "docker push",
+        Command::new("docker").args(["push", &image_ref]),
+        job.deployment_id,
+        nats,
+        build_timeout,
+    )
+    .await?;
+
+    Ok(image_ref)
+}
+
+fn image_tag(registry_url: &str, deployment_id: uuid::Uuid) -> String {
+    format!(
+        "{}/deployment-{}:latest",
+        registry_url.trim_end_matches('/'),
+        deployment_id
+    )
+}
+
+async fn clone_repo(job: &BuildJob, work_dir: &Path, nats: &WorkerNats) -> anyhow::Result<()> {
     let git_url = if let Some(ref token) = job.github_token {
         job.git_url.replace(
             "https://github.com/",
@@ -27,146 +69,104 @@ pub async fn run_build(
         job.git_url.clone()
     };
 
-    let build_cmd = if let Some(ref cmd) = job.build_command {
-        cmd.clone()
-    } else {
-        "npm run build".to_string()
-    };
-
-    // Install git (and common native build deps) in both Alpine and Debian-based images.
-    // We suppress most output to keep logs readable; failures still surface with a non-zero exit.
-    let deps_cmd = r#"if command -v apk >/dev/null 2>&1; then \
-    apk add --no-cache git python3 make g++ ca-certificates > /dev/null; \
-elif command -v apt-get >/dev/null 2>&1; then \
-    apt-get update -y > /dev/null && apt-get install -y git python3 make g++ ca-certificates > /dev/null; \
-else \
-    echo 'No supported package manager (apk/apt-get) found' 1>&2; \
-    exit 127; \
-fi"#;
-
-    // For Node projects, install dependencies before running the build command.
-    // - Uses pnpm/yarn when lockfiles are present (via corepack), otherwise npm.
-    let node_install_cmd = r#"corepack enable > /dev/null 2>&1 || true; \
-if [ -f pnpm-lock.yaml ]; then \
-    corepack prepare pnpm@latest --activate > /dev/null 2>&1 || true; \
-    pnpm install --frozen-lockfile; \
-elif [ -f yarn.lock ]; then \
-    corepack prepare yarn@stable --activate > /dev/null 2>&1 || true; \
-    yarn install --frozen-lockfile; \
-elif [ -f package-lock.json ]; then \
-    npm install; \
-else \
-    npm install; \
-fi"#;
-
-    let full_cmd = if is_node_runtime {
-        // Prepend node_modules/.bin to PATH so bare commands like `next build`
-        // or `vite build` resolve without needing `npm run`.
-        format!(
-            "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {} && export PATH=\"$(pwd)/node_modules/.bin:$PATH\" && {}",
-            deps_cmd, git_url, job.commit_sha, node_install_cmd, build_cmd
-        )
-    } else {
-        format!(
-            "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {}",
-            deps_cmd, git_url, job.commit_sha, build_cmd
-        )
-    };
-
-    let mut cmd = Command::new("docker");
-    cmd.args([
-        "run",
-        "--name",
-        &container_name,
-        "--network",
-        docker_network,
-        "--workdir",
-        "/app",
-        "-e",
-        &format!("PROJECT_ID={}", job.project_id),
-        "-e",
-        &format!("DEPLOYMENT_ID={}", job.deployment_id),
-    ]);
-
-    for (key, value) in &job.env_vars {
-        cmd.arg("-e").arg(format!("{}={}", key, value));
-    }
-
-    cmd.args([&node_image, "sh", "-c", &full_cmd]);
-
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    cmd.kill_on_drop(true);
-
     let _ = nats
         .publish_log(&LogLine {
             deployment_id: job.deployment_id,
-            line: format!("running build in {}", node_image),
+            line: "cloning repository".to_string(),
             timestamp: chrono::Utc::now(),
         })
         .await;
 
-    let mut child = cmd.spawn()?;
+    let status = Command::new("git")
+        .args(["clone", &git_url, "."])
+        .current_dir(work_dir)
+        .status()
+        .await?;
+    if !status.success() {
+        anyhow::bail!("git clone failed with exit code {}", status.code().unwrap_or(-1));
+    }
 
+    let status = Command::new("git")
+        .args(["checkout", &job.commit_sha])
+        .current_dir(work_dir)
+        .status()
+        .await?;
+    if !status.success() {
+        anyhow::bail!("git checkout failed with exit code {}", status.code().unwrap_or(-1));
+    }
+
+    Ok(())
+}
+
+async fn run_logged_command(
+    name: &str,
+    cmd: &mut Command,
+    deployment_id: uuid::Uuid,
+    nats: &WorkerNats,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    let _ = nats
+        .publish_log(&LogLine {
+            deployment_id,
+            line: format!("running {}", name),
+            timestamp: chrono::Utc::now(),
+        })
+        .await;
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.kill_on_drop(true);
+    let mut child = cmd.spawn()?;
     let stdout = take_child_pipe(child.stdout.take(), "stdout")?;
     let stderr = take_child_pipe(child.stderr.take(), "stderr")?;
 
-    let deployment_id = job.deployment_id;
-    let nats_clone = nats.clone();
-
-    let stdout_task = tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            let log = LogLine {
-                deployment_id,
-                line: format!("[stdout] {}", line),
-                timestamp: chrono::Utc::now(),
-            };
-            let _ = nats_clone.publish_log(&log).await;
-        }
-    });
-
-    let deployment_id = job.deployment_id;
-    let nats_clone = nats.clone();
-
-    let stderr_task = tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
-            let log = LogLine {
-                deployment_id,
-                line: format!("[stderr] {}", line),
-                timestamp: chrono::Utc::now(),
-            };
-            let _ = nats_clone.publish_log(&log).await;
-        }
-    });
+    let stdout_task = spawn_log_pipe(stdout, deployment_id, nats.clone(), "stdout");
+    let stderr_task = spawn_log_pipe(stderr, deployment_id, nats.clone(), "stderr");
 
     let status = wait_for_status_with_timeout(
         async {
+            let status = child.wait().await;
             let _ = tokio::join!(stdout_task, stderr_task);
-            child.wait().await
+            status
         },
-        build_timeout,
+        timeout,
     )
     .await?;
 
     if !status.success() {
-        let code = status.code().unwrap_or(-1);
-        let hint = if code == 127 {
-            " (exit 127 = command not found — check build_command and lockfile detection)"
-        } else {
-            ""
-        };
-        anyhow::bail!("build failed with exit code: {}{}", code, hint);
+        anyhow::bail!("{} failed with exit code {}", name, status.code().unwrap_or(-1));
     }
 
     Ok(())
+}
+
+fn spawn_log_pipe<T>(
+    pipe: T,
+    deployment_id: uuid::Uuid,
+    nats: WorkerNats,
+    stream_name: &'static str,
+) -> tokio::task::JoinHandle<()>
+where
+    T: AsyncRead + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(pipe).lines();
+        while let Ok(Some(line)) = reader.next_line().await {
+            let _ = nats
+                .publish_log(&LogLine {
+                    deployment_id,
+                    line: format!("[{}] {}", stream_name, line),
+                    timestamp: chrono::Utc::now(),
+                })
+                .await;
+        }
+    })
 }
 
 fn take_child_pipe<T>(pipe: Option<T>, name: &str) -> anyhow::Result<T>
 where
     T: AsyncRead + Unpin,
 {
-    pipe.ok_or_else(|| anyhow::anyhow!("docker child missing {} pipe", name))
+    pipe.ok_or_else(|| anyhow::anyhow!("command child missing {} pipe", name))
 }
 
 async fn wait_for_status_with_timeout<F>(
@@ -180,18 +180,6 @@ where
         .await
         .map_err(|_| anyhow::anyhow!("build timed out after {} seconds", build_timeout.as_secs()))?
         .map_err(Into::into)
-}
-
-async fn detect_runtime(job: &BuildJob) -> &'static str {
-    if job
-        .build_command
-        .as_ref()
-        .map_or(false, |c| c.contains("cargo"))
-    {
-        "rust:slim"
-    } else {
-        "node:22-alpine"
-    }
 }
 
 #[cfg(test)]
@@ -214,5 +202,15 @@ mod tests {
 
         let build = wait_for_status_with_timeout(wait, std::time::Duration::from_millis(1)).await;
         assert!(matches!(build, Err(err) if err.to_string().contains("timed out")));
+    }
+
+    #[test]
+    fn image_tag_targets_local_registry() {
+        let deployment_id = uuid::Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap();
+
+        assert_eq!(
+            image_tag("localhost:5000", deployment_id),
+            "localhost:5000/deployment-00000000-0000-0000-0000-000000000001:latest"
+        );
     }
 }

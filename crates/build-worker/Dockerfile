@@ -18,15 +18,17 @@ RUN cargo chef cook --release -p vercel-clone-worker --recipe-path recipe.json
 
 COPY . .
 RUN cargo build --release --locked -p vercel-clone-worker
+RUN cargo install railpack --locked
 
 # --- runtime: minimal image, no Rust toolchain ---
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 docker.io && \
+    ca-certificates libssl3 docker.io git && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /app/target/release/vercel-clone-worker .
+COPY --from=builder /usr/local/cargo/bin/railpack /usr/local/bin/railpack
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
     chown -R appuser:appuser /app

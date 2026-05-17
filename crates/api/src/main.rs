@@ -88,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
         storage,
         deployment_servers: Arc::new(DeploymentServers::new(
             PathBuf::from("/tmp/vercel-clone-deployments"),
-            config.docker_network.clone(),
+            config.serve_network.clone(),
             300,
         )),
     };
@@ -115,10 +115,12 @@ async fn main() -> anyhow::Result<()> {
 
     let nats_for_results = state.nats.clone();
     let db_for_results = state.db.clone();
+    let servers_for_results = state.deployment_servers.clone();
     tokio::spawn(supervised("build-result-subscriber", move || {
         let nats = nats_for_results.clone();
         let db = db_for_results.clone();
-        async move { subscribe_build_results(nats, db).await }
+        let servers = servers_for_results.clone();
+        async move { subscribe_build_results(nats, db, servers).await }
     }));
 
     let cors = CorsLayer::new()
@@ -214,7 +216,11 @@ async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Result<()> {
+async fn subscribe_build_results(
+    nats: NatsClient,
+    db: Database,
+    deployment_servers: Arc<DeploymentServers>,
+) -> anyhow::Result<()> {
     use futures::StreamExt;
 
     let subscriber = nats
@@ -244,11 +250,13 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             crate::models::DeploymentState::Ready => {
                 sqlx::query(
                     "UPDATE deployments SET state = 'ready', build_finished_at = $1, \
-                     artifact_key = COALESCE($2, artifact_key) \
-                     WHERE id = $3 AND state IN ('queued', 'building', 'uploading', 'ready')",
+                     artifact_key = COALESCE($2, artifact_key), \
+                     image_ref = COALESCE($3, image_ref) \
+                     WHERE id = $4 AND state IN ('queued', 'building', 'uploading', 'ready')",
                 )
                 .bind(now)
                 .bind(result.artifact_key.as_deref())
+                .bind(result.image_ref.as_deref())
                 .bind(result.deployment_id)
                 .execute(&*db)
                 .await
@@ -298,6 +306,19 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             tracing::error!(error = %e, "failed to update deployment state");
         }
 
+        if matches!(result.state, crate::models::DeploymentState::Ready) {
+            if let Some(image_ref) = result.image_ref.as_deref() {
+                if let Some(host) = deployment_host(&db, result.deployment_id).await? {
+                    if let Err(e) = deployment_servers
+                        .start_image(result.deployment_id, image_ref, &host)
+                        .await
+                    {
+                        tracing::error!(deployment_id = %result.deployment_id, error = %e, "failed to start deployment container");
+                    }
+                }
+            }
+        }
+
         if is_terminal {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
@@ -320,4 +341,12 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
     }
 
     Ok(())
+}
+
+async fn deployment_host(db: &Database, deployment_id: uuid::Uuid) -> anyhow::Result<Option<String>> {
+    let host = sqlx::query_scalar::<_, Option<String>>("SELECT url FROM deployments WHERE id = $1")
+        .bind(deployment_id)
+        .fetch_one(&**db)
+        .await?;
+    Ok(host)
 }
