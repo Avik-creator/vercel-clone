@@ -1,4 +1,5 @@
 use serde_json::Value;
+use secrecy::ExposeSecret;
 use sqlx::Row;
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -22,7 +23,7 @@ pub async fn get_installation_token(state: &AppState, installation_id: i64) -> A
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to get installation token: {e}")))?;
 
-    Ok(token.expose_secret().clone())
+    Ok(token.expose_secret().to_string())
 }
 
 /// push event → trigger a deployment for the linked project
