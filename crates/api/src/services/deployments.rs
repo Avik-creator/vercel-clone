@@ -36,10 +36,25 @@ pub fn artifact_object_key(artifact_prefix: &str, request_path: &str) -> String 
     let path = request_path.trim_start_matches('/');
 
     if path.is_empty() {
-        format!("{}/index.html", prefix)
-    } else {
-        format!("{}/{}", prefix, path)
+        return format!("{}/index.html", prefix);
     }
+
+    // Next.js serves static assets under /_next/ in URLs but stores them as
+    // .next/ on disk (and therefore in MinIO). Map the URL prefix accordingly.
+    let storage_path = if let Some(rest) = path.strip_prefix("_next/") {
+        format!(".next/{}", rest)
+    } else {
+        path.to_string()
+    };
+
+    format!("{}/{}", prefix, storage_path)
+}
+
+/// Returns true when the request path is a Next.js static asset that must be
+/// served from MinIO and should NOT be proxied to the standalone Node server.
+pub fn is_nextjs_static_asset(request_path: &str) -> bool {
+    let path = request_path.trim_start_matches('/');
+    path.starts_with("_next/static/")
 }
 
 pub async fn list_for_project(
@@ -350,5 +365,16 @@ mod tests {
             artifact_object_key("deployment-id/", "/assets/app.js"),
             "deployment-id/assets/app.js"
         );
+        // /_next/ URLs map to .next/ keys in MinIO
+        assert_eq!(
+            artifact_object_key("deployment-id/", "/_next/static/css/app.css"),
+            "deployment-id/.next/static/css/app.css"
+        );
+        assert_eq!(
+            is_nextjs_static_asset("/_next/static/chunks/main.js"),
+            true
+        );
+        assert_eq!(is_nextjs_static_asset("/_next/data/foo.json"), false);
+        assert_eq!(is_nextjs_static_asset("/about"), false);
     }
 }

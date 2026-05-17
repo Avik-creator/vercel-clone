@@ -130,10 +130,17 @@ pub async fn serve_artifact(
     headers: HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
 ) -> AppResult<Response> {
-    let host = headers
+    let host_raw = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| AppError::NotFound("deployment not found".into()))?;
+
+    // Strip the port (e.g. "foo.localhost:8080" → "foo.localhost") so the
+    // lookup matches the URL stored in the DB which never includes a port.
+    let host = host_raw
+        .rsplit_once(':')
+        .map(|(h, _port)| h)
+        .unwrap_or(host_raw);
 
     let deployment = sqlx::query_as::<_, crate::models::Deployment>(
         "SELECT * FROM deployments WHERE url = $1 AND state = 'ready' AND artifact_key IS NOT NULL",
@@ -174,6 +181,12 @@ pub async fn serve_artifact(
             response.headers_mut().insert(header::CONTENT_TYPE, ct);
         }
         return Ok(response);
+    }
+
+    // /_next/static/ assets must come from MinIO — the standalone server.js doesn't
+    // serve them. Return 404 immediately rather than proxying unnecessarily.
+    if deploy_service::is_nextjs_static_asset(uri.path()) {
+        return Err(AppError::NotFound("static asset not found".into()));
     }
 
     // Static file not found - try Next.js standalone server
