@@ -188,27 +188,22 @@ pub async fn serve_artifact(
         .await
         .map_err(|e| AppError::Internal(e))?;
 
-    // Proxy request to the Node server
-    let client = reqwest::Client::new();
-    let url = format!("http://127.0.0.1:{}{}", port, uri.path());
-    let query = uri.query().unwrap_or("");
-    let full_url = if query.is_empty() {
-        url
-    } else {
-        format!("{}?{}", url, query)
+    // Proxy request to the Node server, with retries for the cold-start window
+    // where the server has accepted TCP but isn't serving HTTP yet.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let full_url = {
+        let base = format!("http://127.0.0.1:{}{}", port, uri.path());
+        match uri.query() {
+            Some(q) if !q.is_empty() => format!("{}?{}", base, q),
+            _ => base,
+        }
     };
 
-    let mut req = client.get(&full_url);
-    for (name, value) in &headers {
-        if name != header::HOST {
-            req = req.header(name, value);
-        }
-    }
-
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to proxy to next.js: {}", e)))?;
+    let resp = proxy_with_retry(&client, &full_url, &headers, host).await?;
 
     let status = resp.status();
     let resp_headers = resp.headers().clone();
@@ -219,7 +214,23 @@ pub async fn serve_artifact(
 
     let mut response = Response::builder().status(status);
 
+    // Forward safe response headers only — skip hop-by-hop headers that would
+    // confuse the browser when the body is already buffered (e.g. Transfer-Encoding: chunked).
+    const HOP_BY_HOP: &[&str] = &[
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailers",
+        "upgrade",
+    ];
     for (name, value) in &resp_headers {
+        let n = name.as_str();
+        if HOP_BY_HOP.contains(&n) {
+            continue;
+        }
         if let Ok(val) = value.to_str() {
             if let Ok(header_name) = header::HeaderName::from_bytes(name.as_ref()) {
                 response = response.header(header_name, val);
@@ -232,4 +243,45 @@ pub async fn serve_artifact(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to build response: {}", e)))?;
 
     Ok(body_response)
+}
+
+/// Proxy a GET request, retrying up to 5 times with 1 s delay to handle the
+/// window between node accepting TCP connections and being ready for HTTP.
+async fn proxy_with_retry(
+    client: &reqwest::Client,
+    url: &str,
+    headers: &HeaderMap,
+    original_host: &str,
+) -> AppResult<reqwest::Response> {
+    let mut last_err = String::new();
+
+    for attempt in 0..5u32 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        }
+
+        let mut req = client.get(url);
+        for (name, value) in headers {
+            if name == header::HOST {
+                continue;
+            }
+            req = req.header(name, value);
+        }
+        // Tell the Next.js app what the real host is.
+        req = req.header("x-forwarded-host", original_host);
+        req = req.header("x-forwarded-proto", "http");
+
+        match req.send().await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                last_err = e.to_string();
+                tracing::warn!(attempt, error = %e, "proxy attempt failed, retrying");
+            }
+        }
+    }
+
+    Err(AppError::Internal(anyhow::anyhow!(
+        "failed to proxy to next.js after retries: {}",
+        last_err
+    )))
 }
