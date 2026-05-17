@@ -28,16 +28,32 @@ services:
     volumes:
       - nats_data:/var/lib/nats
 
+  minio:
+    image: minio/minio:latest
+    container_name: vercel-clone-minio
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
   api:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: crates/api/Dockerfile
     container_name: vercel-clone-api
     restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy
       nats:
+        condition: service_started
+      minio:
         condition: service_started
     ports:
       - "3000:3000"
@@ -52,6 +68,32 @@ services:
           path: .
           target: /app
 
+  worker:
+    build:
+      context: .
+      dockerfile: crates/build-worker/Dockerfile
+    container_name: vercel-clone-worker
+    restart: unless-stopped
+    depends_on:
+      nats:
+        condition: service_started
+      minio:
+        condition: service_started
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - worker_tmp:/tmp/builds
+    env_file:
+      - .env
+    environment:
+      NATS_URL: nats://nats:4222
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: deployments
+      DOCKER_NETWORK: vercel-clone_default
+
 volumes:
   pgdata:
   nats_data:
+  minio_data:
+  worker_tmp:
