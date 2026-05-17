@@ -113,6 +113,13 @@ impl NatsClient {
             .or_insert_with(|| broadcast::channel::<LogLine>(1024).0)
             .clone()
     }
+
+    /// Drop the sender for a deployment so all SSE subscribers get RecvError::Closed,
+    /// which signals the build is finished.
+    pub async fn close_log_sender(&self, deployment_id: Uuid) {
+        let mut broadcasts = self.log_broadcasts.lock().await;
+        broadcasts.remove(&deployment_id);
+    }
 }
 
 async fn ensure_stream(

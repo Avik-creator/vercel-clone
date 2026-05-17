@@ -88,19 +88,27 @@ pub async fn stream_logs(
         loop {
             match receiver.recv().await {
                 Ok(log_line) => {
-                    yield Ok(Event::default().data(format!("{}: {}", log_line.timestamp.format("%H:%M:%S"), log_line.line)));
+                    yield Ok(Event::default()
+                        .data(format!("{}: {}", log_line.timestamp.format("%H:%M:%S"), log_line.line)));
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    yield Ok(Event::default().data(format!("[lagged: {} lines dropped]", n)));
+                    yield Ok(Event::default()
+                        .data(format!("[{} log lines dropped due to slow connection]", n)));
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                    // Build finished — tell the client so it can refresh deployment state.
+                    yield Ok(Event::default().event("done").data(""));
                     break;
                 }
             }
         }
     };
 
-    Sse::new(stream)
+    Sse::new(stream).keep_alive(
+        axum::response::sse::KeepAlive::new()
+            .interval(std::time::Duration::from_secs(15))
+            .text("keep-alive"),
+    )
 }
 
 pub async fn build_callback(

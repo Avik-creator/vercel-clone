@@ -191,19 +191,32 @@ class ApiClient {
     })
   }
 
-  streamDeploymentLogs(id: string, onMessage: (log: string) => void, onError?: (error: Event) => void) {
+  streamDeploymentLogs(
+    id: string,
+    onMessage: (log: string) => void,
+    onDone?: () => void,
+    onError?: (error: Event) => void,
+  ) {
     const token = this.getToken()
-    const eventSource = new EventSource(
-      `${this.baseUrl}/v1/deployments/${id}/logs${token ? `?token=${token}` : ""}`
-    )
+    const url = `${this.baseUrl}/v1/deployments/${id}/logs${token ? `?token=${token}` : ""}`
+    const eventSource = new EventSource(url)
 
     eventSource.onmessage = (event) => {
       onMessage(event.data)
     }
 
-    eventSource.onerror = (error) => {
-      onError?.(error)
+    // Server sends `event: done` when the build reaches a terminal state.
+    eventSource.addEventListener("done", () => {
       eventSource.close()
+      onDone?.()
+    })
+
+    eventSource.onerror = () => {
+      // EventSource auto-reconnects on transient errors; only call onError if it
+      // stays closed (e.g. auth failure).
+      if (eventSource.readyState === EventSource.CLOSED) {
+        onError?.(new Event("error"))
+      }
     }
 
     return () => eventSource.close()

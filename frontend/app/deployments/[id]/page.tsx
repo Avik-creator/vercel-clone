@@ -37,7 +37,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
   const [isStreaming, setIsStreaming] = useState(false)
   const [copied, setCopied] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
-  const cleanupRef = useRef<(() => void) | null>(null)
+  const streamStartedRef = useRef(false)
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -45,39 +45,41 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
     }
   }, [authLoading, isAuthenticated, router])
 
-  // Stream logs for active deployments
+  // Seed logs from DB for completed deployments (shown immediately on page load).
   useEffect(() => {
-    if (!deployment || !["queued", "building", "uploading"].includes(deployment.state)) {
-      return
+    if (deployment?.build_log && !streamStartedRef.current && logs.length === 0) {
+      setLogs(deployment.build_log.split("\n").filter(Boolean))
     }
+  }, [deployment?.build_log]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Start SSE stream once when the deployment is first seen as active.
+  // Never restart on state transitions — the stream is kept alive until the server
+  // sends `event: done`, at which point we do a final refresh.
+  useEffect(() => {
+    if (!deployment) return
+    if (streamStartedRef.current) return
+    if (!["queued", "building", "uploading"].includes(deployment.state)) return
+
+    streamStartedRef.current = true
     setIsStreaming(true)
-    cleanupRef.current = api.streamDeploymentLogs(
+
+    const stop = api.streamDeploymentLogs(
       id,
-      (log) => {
-        setLogs(prev => [...prev, log])
-      },
+      (line) => setLogs((prev) => [...prev, line]),
       () => {
+        // Server closed the stream — build finished. Refresh deployment once.
         setIsStreaming(false)
-      }
+        mutate(`deployment-${id}`)
+      },
     )
 
-    return () => {
-      cleanupRef.current?.()
-    }
-  }, [deployment?.state, id])
+    return stop
+  }, [deployment?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-scroll logs
+  // Auto-scroll to the bottom as new lines arrive.
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [logs])
-
-  // Load existing build log
-  useEffect(() => {
-    if (deployment?.build_log && logs.length === 0) {
-      setLogs(deployment.build_log.split("\n").filter(Boolean))
-    }
-  }, [deployment?.build_log])
 
   if (authLoading || !isAuthenticated) {
     return (

@@ -168,6 +168,13 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
             "received build result"
         );
 
+        let is_terminal = matches!(
+            result.state,
+            crate::models::DeploymentState::Ready
+                | crate::models::DeploymentState::Error
+                | crate::models::DeploymentState::Cancelled
+        );
+
         let now = chrono::Utc::now();
         let db_result = match result.state {
             crate::models::DeploymentState::Ready => {
@@ -222,6 +229,12 @@ async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Resu
 
         if let Err(e) = db_result {
             tracing::error!(error = %e, "failed to update deployment state");
+        }
+
+        // Close the broadcast channel so all SSE subscribers receive RecvError::Closed
+        // and can emit a `done` event to the browser.
+        if is_terminal {
+            nats.close_log_sender(result.deployment_id).await;
         }
     }
 

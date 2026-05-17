@@ -22,11 +22,18 @@ export function useProjectDeployments(projectId: string | undefined) {
   )
 }
 
+const ACTIVE_STATES = new Set(["queued", "building", "uploading"])
+
 export function useDeployment(id: string | undefined) {
   return useSWR<Deployment>(
     id ? `deployment-${id}` : null,
     () => api.getDeployment(id!),
-    { refreshInterval: 5000 } // Poll for status updates
+    {
+      // Poll while active, stop once terminal — avoids continuous re-renders after build finishes.
+      refreshInterval: (data) => (data && !ACTIVE_STATES.has(data.state) ? 0 : 3000),
+      // Keep previous data during revalidation so the UI never flickers to skeleton.
+      keepPreviousData: true,
+    }
   )
 }
 
