@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, sqlx::Type)]
+#[serde(rename_all = "lowercase")]
 #[sqlx(type_name = "deployment_state", rename_all = "lowercase")]
 pub enum DeploymentState {
     Queued,

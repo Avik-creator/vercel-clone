@@ -22,7 +22,7 @@ mod models;
 mod routes;
 mod services;
 
-use crate::{config::AppConfig, db::Database, model::build_job::LogLine, services::nats::NatsClient};
+use crate::{config::AppConfig, db::Database, model::build_job::{LogLine, BuildResult}, services::nats::NatsClient};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -61,6 +61,14 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    let nats_for_results = state.nats.clone();
+    let db_for_results = state.db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = subscribe_build_results(nats_for_results, db_for_results).await {
+            tracing::error!(error = %e, "build result subscriber failed");
+        }
+    });
+
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::PATCH])
@@ -95,8 +103,70 @@ async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
 
     while let Some(msg) = subscriber.next().await {
         if let Ok(log) = serde_json::from_slice::<LogLine>(&msg.payload) {
-            let sender = nats.get_log_sender(log.deployment_id);
+            let sender = nats.get_log_sender(log.deployment_id).await;
             let _ = sender.send(log);
+        }
+    }
+
+    Ok(())
+}
+
+async fn subscribe_build_results(nats: NatsClient, db: Database) -> anyhow::Result<()> {
+    use futures::StreamExt;
+
+    let mut subscriber = nats
+        .client
+        .subscribe("build.results.>")
+        .await
+        .map_err(|e| anyhow::anyhow!("failed to subscribe to build.results.>: {}", e))?;
+
+    tracing::info!("subscribed to build results");
+
+    while let Some(msg) = subscriber.next().await {
+        if let Ok(result) = serde_json::from_slice::<BuildResult>(&msg.payload) {
+            tracing::info!(
+                deployment_id = %result.deployment_id,
+                state = ?result.state,
+                "received build result"
+            );
+
+            let now = chrono::Utc::now();
+            let update_result = match result.state {
+                crate::models::DeploymentState::Ready => {
+                    sqlx::query(
+                        "UPDATE deployments SET state = 'ready', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2 WHERE id = $3",
+                    )
+                    .bind(now)
+                    .bind(result.log_output.as_deref().unwrap_or(""))
+                    .bind(result.deployment_id)
+                    .execute(&*db)
+                    .await
+                }
+                crate::models::DeploymentState::Error => {
+                    sqlx::query(
+                        "UPDATE deployments SET state = 'error', build_finished_at = $1, build_log = COALESCE(build_log, '') || $2 WHERE id = $3",
+                    )
+                    .bind(now)
+                    .bind(result.error_message.as_deref().unwrap_or("unknown error"))
+                    .bind(result.deployment_id)
+                    .execute(&*db)
+                    .await
+                }
+                crate::models::DeploymentState::Cancelled => {
+                    sqlx::query(
+                        "UPDATE deployments SET state = 'cancelled', build_finished_at = $1 WHERE id = $2",
+                    )
+                    .bind(now)
+                    .bind(result.deployment_id)
+                    .execute(&*db)
+                    .await
+                }
+                _ => continue,
+            };
+
+            if let Err(e) = update_result {
+                tracing::error!(error = %e, "failed to update deployment state");
+            }
         }
     }
 

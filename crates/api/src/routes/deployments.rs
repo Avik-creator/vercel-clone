@@ -74,7 +74,7 @@ pub async fn stream_logs(
     AuthUser(_user): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
-    let sender = state.nats.get_log_sender(id);
+    let sender = state.nats.get_log_sender(id).await;
     let mut receiver = sender.subscribe();
 
     let stream = async_stream::stream! {

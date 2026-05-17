@@ -56,8 +56,8 @@ impl NatsClient {
         publish(&self.client, &subject, log).await
     }
 
-    pub fn get_log_sender(&self, deployment_id: Uuid) -> broadcast::Sender<LogLine> {
-        let mut broadcasts = self.log_broadcasts.blocking_lock();
+    pub async fn get_log_sender(&self, deployment_id: Uuid) -> broadcast::Sender<LogLine> {
+        let mut broadcasts = self.log_broadcasts.lock().await;
         broadcasts
             .entry(deployment_id)
             .or_insert_with(|| broadcast::channel::<LogLine>(1024).0)
