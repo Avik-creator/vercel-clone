@@ -49,7 +49,25 @@ impl Storage {
         dir: &Path,
         nats: &WorkerNats,
     ) -> anyhow::Result<String> {
-        let prefix = format!("{}/", deployment_id);
+        self.upload_dir_with_prefix(deployment_id, dir, "", nats)
+            .await
+    }
+
+    /// Upload all files under `dir` to `{deployment_id}/{sub_prefix}/{relative_path}`.
+    /// Returns the deployment root prefix `{deployment_id}/`.
+    pub async fn upload_dir_with_prefix(
+        &self,
+        deployment_id: uuid::Uuid,
+        dir: &Path,
+        sub_prefix: &str,
+        nats: &WorkerNats,
+    ) -> anyhow::Result<String> {
+        let root = format!("{}/", deployment_id);
+        let prefix = if sub_prefix.is_empty() {
+            root.clone()
+        } else {
+            format!("{}{}/", root, sub_prefix.trim_matches('/'))
+        };
 
         for entry in WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
             let path = entry.path();
@@ -80,7 +98,7 @@ impl Storage {
             let _ = nats.publish_log(&log).await;
         }
 
-        Ok(prefix)
+        Ok(root)
     }
 }
 

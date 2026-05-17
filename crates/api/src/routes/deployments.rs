@@ -135,16 +135,18 @@ pub async fn serve_artifact(
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| AppError::NotFound("deployment not found".into()))?;
 
-    let artifact_key = sqlx::query_scalar::<_, String>(
-        "SELECT artifact_key FROM deployments WHERE url = $1 AND state = 'ready' AND artifact_key IS NOT NULL",
+    let deployment = sqlx::query_as::<_, crate::models::Deployment>(
+        "SELECT * FROM deployments WHERE url = $1 AND state = 'ready' AND artifact_key IS NOT NULL",
     )
     .bind(host)
     .fetch_optional(&*state.db)
     .await?
     .ok_or_else(|| AppError::NotFound("deployment not found".into()))?;
 
+    let artifact_key = deployment.artifact_key.unwrap();
     let object_key = deploy_service::artifact_object_key(&artifact_key, uri.path());
 
+    // Try static file first
     let s3_result = state
         .storage
         .get_object()
@@ -153,40 +155,81 @@ pub async fn serve_artifact(
         .send()
         .await;
 
-    let object = match s3_result {
-        Ok(o) => o,
-        Err(e) => {
-            let is_not_found = e
-                .as_service_error()
-                .map(|se| se.is_no_such_key())
-                .unwrap_or(false);
-            if is_not_found {
-                return Err(AppError::NotFound("artifact not found".into()));
-            }
-            return Err(AppError::Internal(anyhow::anyhow!(
-                "failed to fetch artifact: {}",
-                e
-            )));
+    if let Ok(object) = s3_result {
+        let content_type = object
+            .content_type()
+            .map(|ct| ct.parse::<header::HeaderValue>())
+            .transpose()
+            .unwrap_or(None);
+
+        let bytes = object
+            .body
+            .collect()
+            .await
+            .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to read artifact body: {}", e)))?
+            .into_bytes();
+
+        let mut response = Response::new(Body::from(bytes));
+        if let Some(ct) = content_type {
+            response.headers_mut().insert(header::CONTENT_TYPE, ct);
         }
-    };
-
-    let content_type = object
-        .content_type()
-        .map(|ct| ct.parse::<header::HeaderValue>())
-        .transpose()
-        .unwrap_or(None);
-
-    let bytes = object
-        .body
-        .collect()
-        .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to read artifact body: {}", e)))?
-        .into_bytes();
-
-    let mut response = Response::new(Body::from(bytes));
-    if let Some(ct) = content_type {
-        response.headers_mut().insert(header::CONTENT_TYPE, ct);
+        return Ok(response);
     }
 
-    Ok(response)
+    // Static file not found - try Next.js standalone server
+    let port: u16 = state
+        .deployment_servers
+        .get_or_start(
+            deployment.id,
+            &artifact_key,
+            &state.storage,
+            &state.config.minio_bucket,
+        )
+        .await
+        .map_err(|e| AppError::Internal(e))?;
+
+    // Proxy request to the Node server
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{}{}", port, uri.path());
+    let query = uri.query().unwrap_or("");
+    let full_url = if query.is_empty() {
+        url
+    } else {
+        format!("{}?{}", url, query)
+    };
+
+    let mut req = client.get(&full_url);
+    for (name, value) in &headers {
+        if name != header::HOST {
+            req = req.header(name, value);
+        }
+    }
+
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to proxy to next.js: {}", e)))?;
+
+    let status = resp.status();
+    let resp_headers = resp.headers().clone();
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to read proxied response: {}", e)))?;
+
+    let mut response = Response::builder().status(status);
+
+    for (name, value) in &resp_headers {
+        if let Ok(val) = value.to_str() {
+            if let Ok(header_name) = header::HeaderName::from_bytes(name.as_ref()) {
+                response = response.header(header_name, val);
+            }
+        }
+    }
+
+    let body_response = response
+        .body(Body::from(bytes))
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to build response: {}", e)))?;
+
+    Ok(body_response)
 }

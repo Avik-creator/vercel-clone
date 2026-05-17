@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::{
@@ -26,6 +27,7 @@ use crate::{
     config::AppConfig,
     db::Database,
     model::build_job::LogLine,
+    services::deployment_servers::DeploymentServers,
     services::nats::NatsClient,
 };
 
@@ -35,6 +37,7 @@ pub struct AppState {
     pub config: Arc<AppConfig>,
     pub nats: NatsClient,
     pub storage: aws_sdk_s3::Client,
+    pub deployment_servers: Arc<DeploymentServers>,
 }
 
 #[tokio::main]
@@ -82,7 +85,22 @@ async fn main() -> anyhow::Result<()> {
         config: config.clone(),
         nats,
         storage,
+        deployment_servers: Arc::new(DeploymentServers::new(
+            PathBuf::from("/tmp/deployments"),
+            300, // 5 minutes idle timeout
+        )),
     };
+
+    tokio::fs::create_dir_all("/tmp/deployments").await?;
+
+    let servers_for_cleanup = state.deployment_servers.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+            servers_for_cleanup.cleanup_idle().await;
+        }
+    });
 
     let nats_for_logs = state.nats.clone();
     tokio::spawn(async move {

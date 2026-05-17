@@ -136,7 +136,6 @@ async fn process_job(
     let work_dir = work_base.join(job.deployment_id.to_string());
     tokio::fs::create_dir_all(&work_dir).await?;
 
-    let output_dir = job.output_dir.as_deref().unwrap_or("dist").to_string();
     let container_name = format!("build-{}", job.deployment_id);
 
     builder::run_build(
@@ -147,42 +146,165 @@ async fn process_job(
     )
     .await?;
 
-    let log = LogLine {
-        deployment_id: job.deployment_id,
-        line: "build completed, extracting artifacts".to_string(),
-        timestamp: chrono::Utc::now(),
+    let _ = nats
+        .publish_log(&LogLine {
+            deployment_id: job.deployment_id,
+            line: "build completed, extracting artifacts".to_string(),
+            timestamp: chrono::Utc::now(),
+        })
+        .await;
+
+    // Detect what the build produced inside the container.
+    let output_type = detect_output_type(&container_name, job.output_dir.as_deref()).await?;
+
+    tracing::info!(
+        deployment_id = %job.deployment_id,
+        output_type = %output_type.label(),
+        "detected build output type"
+    );
+
+    let _ = nats
+        .publish_log(&LogLine {
+            deployment_id: job.deployment_id,
+            line: format!("detected output: {}", output_type.label()),
+            timestamp: chrono::Utc::now(),
+        })
+        .await;
+
+    let artifact_key = match output_type {
+        OutputType::Standalone => {
+            // Next.js standalone: upload standalone/ and .next/static/ under the right prefixes
+            // so deployment_servers.rs can find them.
+            let local_standalone = work_dir.join("standalone");
+            let local_static = work_dir.join("next_static");
+            tokio::fs::create_dir_all(&local_standalone).await?;
+            tokio::fs::create_dir_all(&local_static).await?;
+
+            docker_cp(&container_name, "/app/repo/.next/standalone/.", &local_standalone).await?;
+
+            // Copy public/ into standalone/public if it exists
+            let public_cp = tokio::process::Command::new("docker")
+                .args([
+                    "cp",
+                    &format!("{}:/app/repo/public/.", &container_name),
+                    local_standalone.join("public").to_str().unwrap(),
+                ])
+                .status()
+                .await;
+            if let Ok(s) = public_cp {
+                if !s.success() {
+                    // public/ is optional
+                    let _ = tokio::fs::remove_dir_all(local_standalone.join("public")).await;
+                }
+            }
+
+            // Copy .next/static for client-side assets
+            docker_cp(
+                &container_name,
+                "/app/repo/.next/static/.",
+                &local_static,
+            )
+            .await?;
+
+            // Upload: standalone/ → {uuid}/standalone/, static/ → {uuid}/.next/static/
+            let artifact_key = storage
+                .upload_dir_with_prefix(job.deployment_id, &local_standalone, "standalone", nats)
+                .await?;
+            storage
+                .upload_dir_with_prefix(job.deployment_id, &local_static, ".next/static", nats)
+                .await?;
+            artifact_key
+        }
+        OutputType::Static(ref dir) => {
+            let local_output = work_dir.join("output");
+            tokio::fs::create_dir_all(&local_output).await?;
+            docker_cp(
+                &container_name,
+                &format!("/app/repo/{}/.", dir),
+                &local_output,
+            )
+            .await?;
+            storage
+                .upload_dir(job.deployment_id, &local_output, nats)
+                .await?
+        }
     };
-    let _ = nats.publish_log(&log).await;
 
-    // Copy build output from container to host
-    let local_output = work_dir.join("output");
-    tokio::fs::create_dir_all(&local_output).await?;
-
-    // Append /. so docker cp copies the *contents* of output_dir into local_output,
-    // not the directory itself (which would create an extra nesting level).
-    let status = tokio::process::Command::new("docker")
-        .args([
-            "cp",
-            &format!("{}:/app/repo/{}/.", container_name, output_dir),
-            local_output.to_str().unwrap(),
-        ])
-        .status()
-        .await?;
-
-    if !status.success() {
-        anyhow::bail!("failed to extract build output from container");
-    }
-
-    let artifact_key = storage
-        .upload_dir(job.deployment_id, &local_output, nats)
-        .await?;
-
-    let log = LogLine {
-        deployment_id: job.deployment_id,
-        line: format!("artifacts uploaded to {}", artifact_key),
-        timestamp: chrono::Utc::now(),
-    };
-    let _ = nats.publish_log(&log).await;
+    let _ = nats
+        .publish_log(&LogLine {
+            deployment_id: job.deployment_id,
+            line: format!("artifacts uploaded to {}", artifact_key),
+            timestamp: chrono::Utc::now(),
+        })
+        .await;
 
     Ok(artifact_key)
+}
+
+enum OutputType {
+    Standalone,
+    Static(String),
+}
+
+impl OutputType {
+    fn label(&self) -> &str {
+        match self {
+            OutputType::Standalone => "next.js standalone",
+            OutputType::Static(_) => "static",
+        }
+    }
+}
+
+async fn detect_output_type(
+    container_name: &str,
+    configured_output_dir: Option<&str>,
+) -> anyhow::Result<OutputType> {
+    // Check for Next.js standalone output first (highest priority)
+    let standalone_check = tokio::process::Command::new("docker")
+        .args([
+            "exec",
+            container_name,
+            "sh",
+            "-c",
+            "test -f /app/repo/.next/standalone/server.js && echo yes || echo no",
+        ])
+        .output()
+        .await?;
+
+    if String::from_utf8_lossy(&standalone_check.stdout).trim() == "yes" {
+        return Ok(OutputType::Standalone);
+    }
+
+    // Use configured output_dir if provided, otherwise auto-detect
+    if let Some(dir) = configured_output_dir {
+        return Ok(OutputType::Static(dir.to_string()));
+    }
+
+    // Auto-detect common static output directories
+    let detect_cmd =
+        "if [ -d /app/repo/out ]; then echo out; elif [ -d /app/repo/build ]; then echo build; elif [ -d /app/repo/dist ]; then echo dist; elif [ -d /app/repo/.next ]; then echo .next; else echo dist; fi";
+
+    let output = tokio::process::Command::new("docker")
+        .args(["exec", container_name, "sh", "-c", detect_cmd])
+        .output()
+        .await?;
+
+    let detected = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    Ok(OutputType::Static(if detected.is_empty() {
+        "dist".to_string()
+    } else {
+        detected
+    }))
+}
+
+async fn docker_cp(container: &str, src: &str, dest: &std::path::Path) -> anyhow::Result<()> {
+    tokio::fs::create_dir_all(dest).await?;
+    let status = tokio::process::Command::new("docker")
+        .args(["cp", &format!("{}:{}", container, src), dest.to_str().unwrap()])
+        .status()
+        .await?;
+    if !status.success() {
+        anyhow::bail!("docker cp {}:{} failed", container, src);
+    }
+    Ok(())
 }
