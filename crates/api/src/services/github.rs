@@ -22,7 +22,7 @@ pub async fn get_installation_token(state: &AppState, installation_id: i64) -> A
         .await
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to get installation token: {e}")))?;
 
-    Ok(token.token)
+    Ok(token.expose_secret().clone())
 }
 
 /// push event → trigger a deployment for the linked project
