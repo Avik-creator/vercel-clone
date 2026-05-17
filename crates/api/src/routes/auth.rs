@@ -7,7 +7,7 @@ use serde::Deserialize;
 use crate::{
     AppState,
     errors::{AppError, AppResult},
-    models::{CreateUserRequest, LoginRequest, AuthResponse},
+    models::{AuthResponse, CreateUserRequest, LoginRequest},
     services::auth as auth_service,
 };
 
@@ -53,7 +53,8 @@ pub async fn github_oauth_redirect(
 pub async fn github_oauth_callback(
     State(state): State<AppState>,
     Query(query): Query<OAuthCallbackQuery>,
-) -> AppResult<Json<AuthResponse>> {
+) -> AppResult<Redirect> {
     let resp = auth_service::github_oauth(&state, &query.code).await?;
-    Ok(Json(resp))
+    let redirect_url = format!("{}/auth/callback?token={}", state.config.frontend_url, resp.token);
+    Ok(Redirect::to(&redirect_url))
 }

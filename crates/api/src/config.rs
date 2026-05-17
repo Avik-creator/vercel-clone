@@ -30,6 +30,10 @@ pub struct AppConfig {
 
     #[serde(default = "default_nats_url")]
     pub nats_url: String,
+
+    /// Frontend URL for OAuth redirects
+    #[serde(default = "default_frontend_url")]
+    pub frontend_url: String,
 }
 
 impl AppConfig {
@@ -51,3 +55,4 @@ fn default_port() -> u16 { 3000 }
 fn default_env() -> String { "development".into() }
 fn default_base_domain() -> String { "localhost".into() }
 fn default_nats_url() -> String { "nats://localhost:4222".into() }
+fn default_frontend_url() -> String { "http://localhost:5173".into() }
