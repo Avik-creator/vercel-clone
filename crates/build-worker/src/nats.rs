@@ -17,6 +17,7 @@ impl WorkerNats {
         let context = async_nats::jetstream::new(client.clone());
 
         ensure_stream(&context, "build_jobs", vec!["build.jobs.>", "build.jobs"]).await?;
+        ensure_stream(&context, "build_jobs_dlq", vec!["build.jobs.dlq.>"]).await?;
         ensure_stream(
             &context,
             "build_results",
@@ -40,6 +41,11 @@ impl WorkerNats {
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
                 ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
                 max_deliver: 3,
+                backoff: vec![
+                    std::time::Duration::from_secs(5),
+                    std::time::Duration::from_secs(30),
+                    std::time::Duration::from_secs(120),
+                ],
                 ..Default::default()
             })
             .await?;

@@ -73,6 +73,7 @@ async fn main() -> anyhow::Result<()> {
                 let nats = nats.clone();
                 let work_base = work_base.clone();
                 let registry_url = config.registry_url.clone();
+                let build_network = config.build_network.clone();
                 let build_timeout_secs = config.build_timeout_secs;
 
                 tokio::spawn(async move {
@@ -109,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
                         &nats,
                         &work_base,
                         &registry_url,
+                        &build_network,
                         build_timeout_secs,
                     )
                     .await
@@ -191,6 +193,7 @@ async fn process_job(
     nats: &nats::WorkerNats,
     work_base: &std::path::Path,
     registry_url: &str,
+    build_network: &str,
     build_timeout_secs: u64,
 ) -> anyhow::Result<String> {
     let work_dir = work_base.join(job.deployment_id.to_string());
@@ -201,6 +204,7 @@ async fn process_job(
         nats,
         &work_dir,
         registry_url,
+        build_network,
         std::time::Duration::from_secs(build_timeout_secs),
     )
     .await?;

@@ -9,12 +9,14 @@ pub mod auth;
 pub mod deployments;
 pub mod github;
 pub mod health;
+pub mod metrics;
 pub mod projects;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health::health_check))
         .route("/ready", get(health::readiness_check))
+        .route("/metrics", get(metrics::metrics))
         .route("/v1/auth/register", post(auth::register))
         .route("/v1/auth/login", post(auth::login))
         .route("/v1/auth/refresh", post(auth::refresh))

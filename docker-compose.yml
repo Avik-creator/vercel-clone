@@ -56,6 +56,30 @@ services:
           cpus: '2.0'
           memory: 2G
 
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: vercel-clone-pgbouncer
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      DB_NAME: vercel_clone
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 200
+      DEFAULT_POOL_SIZE: 20
+    ports:
+      - "6432:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
   nats:
     image: nats:2.11-alpine
     container_name: vercel-clone-nats
@@ -126,6 +150,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
       nats:
         condition: service_healthy
       minio:
@@ -142,7 +168,7 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/vercel_clone?sslmode=prefer
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@pgbouncer:5432/vercel_clone?sslmode=prefer
       NATS_URL: nats://${NATS_USER:-nats}:${NATS_PASSWORD}@nats:4222
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
@@ -195,7 +221,11 @@ services:
     environment:
       NATS_URL: nats://${NATS_USER:-nats}:${NATS_PASSWORD}@nats:4222
       REGISTRY_URL: localhost:5000
+      BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2
+    networks:
+      - default
+      - build-net
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/worker-alive || exit 1"]
       interval: 10s
@@ -208,6 +238,91 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: vercel-clone-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: vercel-clone-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    command: ["-config.file=/etc/loki/config.yml"]
+    volumes:
+      - ./infra/loki-config.yml:/etc/loki/config.yml:ro
+      - loki_data:/loki
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: vercel-clone-grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+
+  alloy:
+    image: grafana/alloy:latest
+    container_name: vercel-clone-alloy
+    restart: unless-stopped
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./infra/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
+  postgres-backup:
+    image: prodrigestivill/postgres-backup-local:17
+    container_name: vercel-clone-postgres-backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_DB: vercel_clone
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      SCHEDULE: "@daily"
+      BACKUP_KEEP_DAYS: 7
+      BACKUP_KEEP_WEEKS: 4
+      BACKUP_KEEP_MONTHS: 3
+    volumes:
+      - pgbackups:/backups
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+
 volumes:
   pgdata:
   nats_data:
@@ -215,9 +330,15 @@ volumes:
   worker_tmp:
   traefik_acme:
   registry_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:
+  pgbackups:
 
 networks:
   default:
     name: vercel-clone_default
   serve-net:
     name: vercel-clone_serve-net
+  build-net:
+    name: vercel-clone_build-net

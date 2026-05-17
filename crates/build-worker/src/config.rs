@@ -8,6 +8,9 @@ pub struct WorkerConfig {
     #[serde(default = "default_registry_url")]
     pub registry_url: String,
 
+    #[serde(default = "default_build_network")]
+    pub build_network: String,
+
     #[serde(default = "default_build_timeout_secs")]
     pub build_timeout_secs: u64,
 
@@ -31,6 +34,9 @@ fn default_nats_url() -> String {
 }
 fn default_registry_url() -> String {
     "localhost:5000".into()
+}
+fn default_build_network() -> String {
+    "vercel-clone_build-net".into()
 }
 fn default_build_timeout_secs() -> u64 {
     600

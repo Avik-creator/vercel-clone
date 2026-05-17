@@ -108,9 +108,11 @@ async fn main() -> anyhow::Result<()> {
     }));
 
     let nats_for_logs = state.nats.clone();
+    let db_for_logs = state.db.clone();
     tokio::spawn(supervised("log-subscriber", move || {
         let nats = nats_for_logs.clone();
-        async move { subscribe_all_logs(nats).await }
+        let db = db_for_logs.clone();
+        async move { subscribe_all_logs(nats, db).await }
     }));
 
     let nats_for_results = state.nats.clone();
@@ -194,7 +196,7 @@ where
     }
 }
 
-async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
+async fn subscribe_all_logs(nats: NatsClient, db: Database) -> anyhow::Result<()> {
     use futures::StreamExt;
 
     let mut subscriber = nats
@@ -207,12 +209,27 @@ async fn subscribe_all_logs(nats: NatsClient) -> anyhow::Result<()> {
 
     while let Some(msg) = subscriber.next().await {
         if let Ok(log) = serde_json::from_slice::<LogLine>(&msg.payload) {
+            if let Err(e) = persist_log_line(&db, &log).await {
+                tracing::error!(deployment_id = %log.deployment_id, error = %e, "failed to persist build log line");
+            }
             nats.buffer_log_line(log.deployment_id, &log.line).await;
             let sender = nats.get_log_sender(log.deployment_id).await;
             let _ = sender.send(log);
         }
     }
 
+    Ok(())
+}
+
+async fn persist_log_line(db: &Database, log: &LogLine) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO build_log_lines (deployment_id, line, timestamp) VALUES ($1, $2, $3)",
+    )
+    .bind(log.deployment_id)
+    .bind(&log.line)
+    .bind(log.timestamp)
+    .execute(&**db)
+    .await?;
     Ok(())
 }
 

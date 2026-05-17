@@ -1,4 +1,4 @@
-use async_nats::jetstream::stream::Stream;
+use async_nats::jetstream::stream::{Config as StreamConfig, Stream};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -33,6 +33,7 @@ impl NatsClient {
         let context = async_nats::jetstream::new(client.clone());
 
         ensure_stream(&context, "build_jobs", vec!["build.jobs.>", "build.jobs"]).await?;
+        ensure_stream(&context, "build_jobs_dlq", vec!["build.jobs.dlq.>"]).await?;
         ensure_stream(
             &context,
             "build_results",
@@ -76,14 +77,7 @@ impl NatsClient {
             .map_err(|e| AppError::Internal(anyhow::anyhow!("get build_results stream: {}", e)))?;
 
         let consumer = stream
-            .create_consumer(async_nats::jetstream::consumer::pull::Config {
-                durable_name: Some("api-result-processor".to_string()),
-                filter_subject: "build.results.>".to_string(),
-                deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
-                ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
-                max_deliver: 5,
-                ..Default::default()
-            })
+            .create_consumer(result_consumer_config())
             .await
             .map_err(|e| AppError::Internal(anyhow::anyhow!("create result consumer: {}", e)))?;
 
@@ -147,18 +141,38 @@ async fn ensure_stream(
     match context.get_stream(name).await {
         Ok(s) => Ok(s),
         Err(_) => context
-            .create_stream(async_nats::jetstream::stream::Config {
-                name: name.to_string(),
-                subjects: subjects.into_iter().map(|s| s.to_string()).collect(),
-                retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
-                max_messages: 50_000,
-                max_age: std::time::Duration::from_secs(7 * 24 * 3600),
-                ..Default::default()
-            })
+            .create_stream(stream_config(name, subjects))
             .await
             .map_err(|e| {
                 AppError::Internal(anyhow::anyhow!("failed to create stream {}: {}", name, e))
             }),
+    }
+}
+
+fn stream_config(name: &str, subjects: Vec<&str>) -> StreamConfig {
+    StreamConfig {
+        name: name.to_string(),
+        subjects: subjects.into_iter().map(|s| s.to_string()).collect(),
+        retention: async_nats::jetstream::stream::RetentionPolicy::Limits,
+        max_messages: 50_000,
+        max_age: std::time::Duration::from_secs(7 * 24 * 3600),
+        ..Default::default()
+    }
+}
+
+fn result_consumer_config() -> async_nats::jetstream::consumer::pull::Config {
+    async_nats::jetstream::consumer::pull::Config {
+        durable_name: Some("api-result-processor".to_string()),
+        filter_subject: "build.results.>".to_string(),
+        deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
+        ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
+        max_deliver: 5,
+        backoff: vec![
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(120),
+        ],
+        ..Default::default()
     }
 }
 
@@ -177,4 +191,32 @@ async fn publish<T: Serialize>(
         .map_err(|e| AppError::Internal(anyhow::anyhow!("failed to publish to NATS: {}", e)))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dlq_stream_captures_failed_build_jobs() {
+        let config = stream_config("build_jobs_dlq", vec!["build.jobs.dlq.>"]);
+
+        assert_eq!(config.name, "build_jobs_dlq");
+        assert_eq!(config.subjects, vec!["build.jobs.dlq.>".to_string()]);
+    }
+
+    #[test]
+    fn result_consumer_uses_backoff_for_retries() {
+        let config = result_consumer_config();
+
+        assert_eq!(config.max_deliver, 5);
+        assert_eq!(
+            config.backoff,
+            vec![
+                std::time::Duration::from_secs(5),
+                std::time::Duration::from_secs(30),
+                std::time::Duration::from_secs(120),
+            ]
+        );
+    }
 }

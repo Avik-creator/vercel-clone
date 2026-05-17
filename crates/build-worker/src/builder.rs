@@ -13,6 +13,7 @@ pub async fn run_build(
     nats: &WorkerNats,
     work_dir: &Path,
     registry_url: &str,
+    build_network: &str,
     build_timeout: Duration,
 ) -> anyhow::Result<String> {
     clone_repo(job, work_dir, nats).await?;
@@ -31,7 +32,18 @@ pub async fn run_build(
     run_logged_command(
         "docker build",
         Command::new("docker")
-            .args(["build", "-f", "Dockerfile.railpack", "-t", &image_ref, "."])
+            .args([
+                "build",
+                "--network",
+                build_network,
+                "--memory",
+                "4g",
+                "-f",
+                "Dockerfile.railpack",
+                "-t",
+                &image_ref,
+                ".",
+            ])
             .current_dir(work_dir),
         job.deployment_id,
         nats,
