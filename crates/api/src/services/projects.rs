@@ -2,7 +2,7 @@ use uuid::Uuid;
 use crate::{
     AppState,
     errors::{AppResult, NotFoundExt},
-    models::{CreateProjectRequest, EnvVarEntry, EnvVarTarget, Project, UpdateProjectRequest},
+    models::{CreateProjectRequest, EnvVarEntry, LinkGithubRequest, Project, UpdateProjectRequest},
 };
 
 pub async fn list_for_user(state: &AppState, user_id: Uuid) -> AppResult<Vec<Project>> {
@@ -214,6 +214,34 @@ pub async fn delete_env_var(
     .await?;
 
     Ok(env_vars)
+}
+
+pub async fn link_github(
+    state: &AppState,
+    user_id: Uuid,
+    project_id: Uuid,
+    req: LinkGithubRequest,
+) -> AppResult<Project> {
+    let project = get_for_user(state, user_id, project_id).await?;
+
+    let project = sqlx::query_as::<_, Project>(
+        r#"
+        UPDATE projects SET
+            github_repo = $3,
+            github_installation_id = $4,
+            updated_at = NOW()
+        WHERE id = $1 AND owner_id = $2
+        RETURNING *
+        "#
+    )
+    .bind(project_id)
+    .bind(user_id)
+    .bind(&req.github_repo)
+    .bind(req.installation_id)
+    .fetch_one(&*state.db)
+    .await?;
+
+    Ok(project)
 }
 
 fn slugify(name: &str) -> String {

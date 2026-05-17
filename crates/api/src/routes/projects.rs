@@ -8,7 +8,7 @@ use crate::{
     AppState,
     errors::{AppError, AppResult},
     middleware::auth::AuthUser,
-    models::{CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, UpdateEnvVarsRequest, UpdateProjectRequest},
+    models::{CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, LinkGithubRequest, UpdateEnvVarsRequest, UpdateProjectRequest},
     services::projects as project_service,
 };
 
@@ -101,9 +101,11 @@ pub async fn delete_env(
 }
 
 pub async fn link_github(
-    State(_state): State<AppState>,
-    AuthUser(_user): AuthUser,
-    Path(_id): Path<Uuid>,
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<LinkGithubRequest>,
 ) -> AppResult<Json<Value>> {
-    Err(AppError::BadRequest("not yet implemented".into()))
+    let project = project_service::link_github(&state, user.id, id, body).await?;
+    Ok(Json(serde_json::to_value(project).unwrap()))
 }

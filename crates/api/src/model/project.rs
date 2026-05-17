@@ -67,3 +67,9 @@ pub struct UpdateProjectRequest {
     pub root_dir: Option<String>,
     pub production_branch: Option<String>,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct LinkGithubRequest {
+    pub github_repo: String,
+    pub installation_id: i64,
+}
