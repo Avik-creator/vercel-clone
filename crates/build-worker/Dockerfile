@@ -35,6 +35,7 @@ COPY --from=builder /app/target/release/vercel-clone-worker .
 COPY --from=railpack-builder /usr/local/bin/railpack /usr/local/bin/railpack
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
+    usermod -aG docker appuser && \
     chown -R appuser:appuser /app
 
 USER appuser
