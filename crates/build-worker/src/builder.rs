@@ -13,19 +13,25 @@ pub async fn run_build(
     nats: &WorkerNats,
     work_dir: &Path,
     registry_url: &str,
+    build_registry_url: &str,
     _build_network: &str,
     build_timeout: Duration,
 ) -> anyhow::Result<String> {
     clone_repo(job, work_dir, nats).await?;
 
-    let image_ref = image_tag(registry_url, job.deployment_id);
+    // BuildKit pushes directly to the registry using its Docker-network hostname.
+    // This avoids sending the image tarball back to the client (which hangs on large images).
+    let build_image_ref = image_tag(build_registry_url, job.deployment_id);
 
-    // railpack build: --name sets the image tag; there is no --push flag.
-    // BUILDKIT_HOST env var (set in docker-compose) points railpack at our BuildKit daemon.
+    // The image_ref stored in the DB uses the host-accessible hostname so Docker can pull it.
+    let serve_image_ref = image_tag(registry_url, job.deployment_id);
+
+    // --output image tells BuildKit to push directly to the registry (type=image,push=true).
+    // No tarball is transferred back to the worker client.
     run_logged_command(
         "railpack build",
         Command::new("railpack")
-            .args(["build", "--name", &image_ref, "."])
+            .args(["build", "--name", &build_image_ref, "--output", "image", "."])
             .current_dir(work_dir),
         job.deployment_id,
         nats,
@@ -33,17 +39,7 @@ pub async fn run_build(
     )
     .await?;
 
-    // Push the built image to the local registry.
-    run_logged_command(
-        "docker push",
-        Command::new("docker").args(["push", &image_ref]),
-        job.deployment_id,
-        nats,
-        build_timeout,
-    )
-    .await?;
-
-    Ok(image_ref)
+    Ok(serve_image_ref)
 }
 
 fn image_tag(registry_url: &str, deployment_id: uuid::Uuid) -> String {

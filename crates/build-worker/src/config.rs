@@ -8,8 +8,13 @@ pub struct WorkerConfig {
     pub nats_user: Option<String>,
     pub nats_password: Option<String>,
 
+    /// Registry URL as seen by Docker daemon (host port-forwarded, used in image_ref stored in DB).
     #[serde(default = "default_registry_url")]
     pub registry_url: String,
+
+    /// Registry URL as seen by BuildKit daemon (Docker-network DNS, used for direct push).
+    /// Defaults to registry_url when not set.
+    pub build_registry_url: Option<String>,
 
     #[serde(default = "default_build_network")]
     pub build_network: String,

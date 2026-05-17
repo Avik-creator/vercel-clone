@@ -77,6 +77,9 @@ async fn main() -> anyhow::Result<()> {
                 let nats = nats.clone();
                 let work_base = work_base.clone();
                 let registry_url = config.registry_url.clone();
+                let build_registry_url = config.build_registry_url
+                    .clone()
+                    .unwrap_or_else(|| config.registry_url.clone());
                 let build_network = config.build_network.clone();
                 let build_timeout_secs = config.build_timeout_secs;
 
@@ -114,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
                         &nats,
                         &work_base,
                         &registry_url,
+                        &build_registry_url,
                         &build_network,
                         build_timeout_secs,
                     )
@@ -197,6 +201,7 @@ async fn process_job(
     nats: &nats::WorkerNats,
     work_base: &std::path::Path,
     registry_url: &str,
+    build_registry_url: &str,
     build_network: &str,
     build_timeout_secs: u64,
 ) -> anyhow::Result<String> {
@@ -208,6 +213,7 @@ async fn process_job(
         nats,
         &work_dir,
         registry_url,
+        build_registry_url,
         build_network,
         std::time::Duration::from_secs(build_timeout_secs),
     )

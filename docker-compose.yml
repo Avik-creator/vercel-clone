@@ -146,9 +146,11 @@ services:
     container_name: buildkit
     restart: unless-stopped
     privileged: true
-    command: ["--addr", "tcp://0.0.0.0:1234", "--addr", "unix:///run/buildkit/buildkitd.sock"]
+    command: ["--addr", "tcp://0.0.0.0:1234", "--config", "/etc/buildkit/buildkitd.toml"]
+    volumes:
+      - ./infra/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
     healthcheck:
-      test: ["CMD", "buildctl", "debug", "info", "--addr", "tcp://localhost:1234"]
+      test: ["CMD", "buildctl", "--addr", "tcp://localhost:1234", "debug", "workers"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -250,6 +252,7 @@ services:
       NATS_USER: ${NATS_USER:-nats}
       NATS_PASSWORD: ${NATS_PASSWORD}
       REGISTRY_URL: localhost:5000
+      BUILD_REGISTRY_URL: registry:5000
       BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2
       BUILDKIT_HOST: tcp://buildkit:1234
