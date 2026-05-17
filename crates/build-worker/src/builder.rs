@@ -60,12 +60,13 @@ else \
 fi"#;
 
     let full_cmd = if is_node_runtime {
+        // Prepend node_modules/.bin to PATH so bare commands like `next build`
+        // or `vite build` resolve without needing `npm run`.
         format!(
-            "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {} && {}",
+            "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {} && export PATH=\"$(pwd)/node_modules/.bin:$PATH\" && {}",
             deps_cmd, git_url, job.commit_sha, node_install_cmd, build_cmd
         )
     } else {
-        // Non-Node runtimes (e.g. Rust) should provide their own build command.
         format!(
             "set -e; {} && git clone {} /app/repo && cd /app/repo && git checkout {} && {}",
             deps_cmd, git_url, job.commit_sha, build_cmd
@@ -149,7 +150,13 @@ fi"#;
     .await?;
 
     if !status.success() {
-        anyhow::bail!("build failed with exit code: {:?}", status.code());
+        let code = status.code().unwrap_or(-1);
+        let hint = if code == 127 {
+            " (exit 127 = command not found — check build_command and lockfile detection)"
+        } else {
+            ""
+        };
+        anyhow::bail!("build failed with exit code: {}{}", code, hint);
     }
 
     Ok(())
