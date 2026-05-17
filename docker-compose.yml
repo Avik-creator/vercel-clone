@@ -141,6 +141,20 @@ services:
           cpus: '0.5'
           memory: 512M
 
+  buildkit:
+    image: moby/buildkit
+    container_name: buildkit
+    restart: unless-stopped
+    privileged: true
+    networks:
+      - default
+      - build-net
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+
   api:
     build:
       context: .
@@ -216,6 +230,8 @@ services:
         condition: service_healthy
       registry:
         condition: service_started
+      buildkit:
+        condition: service_started
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     tmpfs:
@@ -229,7 +245,7 @@ services:
       REGISTRY_URL: localhost:5000
       BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2
-      DOCKER_BUILDKIT: "1"
+      BUILDKIT_HOST: docker-container://buildkit
     networks:
       - default
       - build-net
