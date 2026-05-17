@@ -2,14 +2,12 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import Link from "next/link"
 import { useAuth } from "@/lib/auth-context"
-import { DashboardLayout } from "@/components/dashboard-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ArrowLeft, User } from "lucide-react"
+import { User } from "lucide-react"
 
 export default function ProfilePage() {
   const { isAuthenticated, isLoading: authLoading, user } = useAuth()
@@ -40,75 +38,65 @@ export default function ProfilePage() {
   }
 
   return (
-    <DashboardLayout>
-      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-        <Link
-          href="/settings"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Settings
-        </Link>
-
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-foreground">Profile</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage your profile information
-          </p>
-        </div>
-
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                <User className="h-5 w-5 text-foreground" />
-              </div>
-              <div>
-                <CardTitle>Personal Information</CardTitle>
-                <CardDescription>Update your profile details</CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
-                <Input
-                  id="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  disabled
-                />
-                <p className="text-xs text-muted-foreground">
-                  Email cannot be changed
-                </p>
-              </div>
-              {user?.github_login && (
-                <div className="space-y-2">
-                  <Label>GitHub Account</Label>
-                  <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
-                    <span className="text-sm">Connected as @{user.github_login}</span>
-                  </div>
-                </div>
-              )}
-              <div className="flex justify-end pt-2">
-                <Button type="button" disabled>
-                  Save Changes
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
+    <div>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-foreground">Profile</h1>
+        <p className="text-muted-foreground mt-1">
+          Manage your profile information
+        </p>
       </div>
-    </DashboardLayout>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+              <User className="h-5 w-5 text-foreground" />
+            </div>
+            <div>
+              <CardTitle>Personal Information</CardTitle>
+              <CardDescription>Update your profile details</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <form className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Name</Label>
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                disabled
+              />
+              <p className="text-xs text-muted-foreground">
+                Email cannot be changed
+              </p>
+            </div>
+            {user?.github_login && (
+              <div className="space-y-2">
+                <Label>GitHub Account</Label>
+                <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
+                  <span className="text-sm">Connected as @{user.github_login}</span>
+                </div>
+              </div>
+            )}
+            <div className="flex justify-end pt-2">
+              <Button type="button" disabled>
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
   )
 }

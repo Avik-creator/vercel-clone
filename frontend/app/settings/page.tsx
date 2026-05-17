@@ -4,7 +4,6 @@ import { useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { useAuth } from "@/lib/auth-context"
-import { DashboardLayout } from "@/components/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Key, User, Shield, Bell } from "lucide-react"
 
@@ -54,56 +53,54 @@ export default function SettingsPage() {
   }
 
   return (
-    <DashboardLayout>
-      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mb-8">
-          <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-          <p className="text-muted-foreground mt-1">
-            Manage your account settings and preferences
-          </p>
-        </div>
-
-        {/* User Info */}
-        <Card className="mb-8">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-2xl font-semibold">
-                {user?.name?.charAt(0).toUpperCase() || "U"}
-              </div>
-              <div>
-                <h2 className="text-xl font-semibold text-foreground">{user?.name}</h2>
-                <p className="text-muted-foreground">{user?.email}</p>
-                {user?.github_login && (
-                  <p className="text-sm text-muted-foreground mt-1">
-                    GitHub: @{user.github_login}
-                  </p>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Settings Navigation */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {settingsNav.map((item) => (
-            <Link key={item.href} href={item.href}>
-              <Card className="h-full transition-colors hover:bg-muted/50">
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                      <item.icon className="h-5 w-5 text-foreground" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base">{item.title}</CardTitle>
-                      <CardDescription>{item.description}</CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
-              </Card>
-            </Link>
-          ))}
-        </div>
+    <div>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+        <p className="text-muted-foreground mt-1">
+          Manage your account settings and preferences
+        </p>
       </div>
-    </DashboardLayout>
+
+      {/* User Info */}
+      <Card className="mb-8">
+        <CardContent className="p-6">
+          <div className="flex items-center gap-4">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted text-2xl font-semibold">
+              {user?.name?.charAt(0).toUpperCase() || "U"}
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold text-foreground">{user?.name}</h2>
+              <p className="text-muted-foreground">{user?.email}</p>
+              {user?.github_login && (
+                <p className="text-sm text-muted-foreground mt-1">
+                  GitHub: @{user.github_login}
+                </p>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Settings Navigation */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {settingsNav.map((item) => (
+          <Link key={item.href} href={item.href}>
+            <Card className="h-full transition-colors hover:bg-muted/50">
+              <CardHeader>
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
+                    <item.icon className="h-5 w-5 text-foreground" />
+                  </div>
+                  <div>
+                    <CardTitle className="text-base">{item.title}</CardTitle>
+                    <CardDescription>{item.description}</CardDescription>
+                  </div>
+                </div>
+              </CardHeader>
+            </Card>
+          </Link>
+        ))}
+      </div>
+    </div>
   )
 }

@@ -2,11 +2,9 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import Link from "next/link"
 import { useAuth } from "@/lib/auth-context"
 import { useApiKeys } from "@/lib/hooks"
 import { api, ApiKey } from "@/lib/api"
-import { DashboardLayout } from "@/components/dashboard-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -14,7 +12,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { ArrowLeft, Plus, Trash2, Key, Copy, Check, AlertTriangle } from "lucide-react"
+import { Plus, Trash2, Key, Copy, Check, AlertTriangle } from "lucide-react"
 import { formatDate, formatRelativeTime } from "@/lib/utils"
 import { mutate } from "swr"
 
@@ -96,18 +94,8 @@ export default function ApiKeysPage() {
   }
 
   return (
-    <DashboardLayout>
-      <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Back link */}
-        <Link
-          href="/settings"
-          className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to Settings
-        </Link>
-
-        <div className="flex items-center justify-between mb-8">
+    <div>
+      <div className="flex items-center justify-between mb-8">
           <div>
             <h1 className="text-2xl font-bold text-foreground">API Keys</h1>
             <p className="text-muted-foreground mt-1">
@@ -298,6 +286,5 @@ export default function ApiKeysPage() {
           </DialogContent>
         </Dialog>
       </div>
-    </DashboardLayout>
   )
 }
