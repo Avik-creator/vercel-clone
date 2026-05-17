@@ -79,7 +79,7 @@ services:
       - "8080:8080" # keep direct access for dev
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock # needed to manage deployment containers
-      - deployment_data:/tmp/deployments
+      - /tmp/vercel-clone-deployments:/tmp/deployments
     env_file:
       - .env
     environment:
@@ -131,4 +131,3 @@ volumes:
   nats_data:
   minio_data:
   worker_tmp:
-  deployment_data:
