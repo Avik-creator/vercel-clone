@@ -1,5 +1,5 @@
 import useSWR from "swr"
-import { api, Project, Deployment, ApiKey, EnvVarEntry } from "@/lib/api"
+import { api, Project, Deployment, ApiKey, EnvVarEntry, GitHubRepo } from "@/lib/api"
 
 // Projects
 export function useProjects() {
@@ -41,4 +41,11 @@ export function useEnvVars(projectId: string | undefined) {
 // API Keys
 export function useApiKeys() {
   return useSWR<ApiKey[]>("api-keys", () => api.getApiKeys())
+}
+
+// GitHub
+export function useGitHubRepos() {
+  return useSWR<GitHubRepo[]>("github-repos", () => api.getGitHubRepos(), {
+    revalidateOnFocus: false,
+  })
 }

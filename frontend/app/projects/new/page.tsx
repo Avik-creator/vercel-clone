@@ -1,17 +1,19 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { useAuth } from "@/lib/auth-context"
-import { api } from "@/lib/api"
+import { useGitHubRepos } from "@/lib/hooks"
+import { api, GitHubRepo } from "@/lib/api"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, FolderGit2 } from "lucide-react"
+import { ArrowLeft, FolderGit2, Lock, Search, RefreshCw, AlertCircle } from "lucide-react"
+import { GitHubIcon } from "@/components/icons/github"
 import { mutate } from "swr"
 
 const FRAMEWORKS = [
@@ -24,17 +26,32 @@ const FRAMEWORKS = [
 ]
 
 export default function NewProjectPage() {
-  const { isAuthenticated, isLoading: authLoading } = useAuth()
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth()
   const router = useRouter()
+  const { data: repos, error: reposError, isLoading: reposLoading, mutate: mutateRepos } = useGitHubRepos()
   
   const [name, setName] = useState("")
-  const [githubRepo, setGithubRepo] = useState("")
+  const [selectedRepo, setSelectedRepo] = useState<string>("")
+  const [manualRepo, setManualRepo] = useState("")
+  const [useManualInput, setUseManualInput] = useState(false)
   const [framework, setFramework] = useState("")
   const [buildCommand, setBuildCommand] = useState("")
   const [outputDir, setOutputDir] = useState("")
   const [productionBranch, setProductionBranch] = useState("main")
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  // Auto-set project name from repo selection
+  useEffect(() => {
+    if (selectedRepo && !useManualInput) {
+      const repo = repos?.find(r => r.full_name === selectedRepo)
+      if (repo && !name) {
+        setName(repo.name)
+        setProductionBranch(repo.default_branch)
+      }
+    }
+  }, [selectedRepo, repos, name, useManualInput])
 
   if (authLoading || !isAuthenticated) {
     return (
@@ -44,10 +61,19 @@ export default function NewProjectPage() {
     )
   }
 
+  const hasGitHubLinked = !!user?.github_id
+
+  const filteredRepos = repos?.filter(repo => 
+    repo.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    repo.description?.toLowerCase().includes(searchQuery.toLowerCase())
+  ) || []
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError("")
     setIsLoading(true)
+
+    const githubRepo = useManualInput ? manualRepo : selectedRepo
 
     try {
       const project = await api.createProject({
@@ -67,7 +93,6 @@ export default function NewProjectPage() {
     }
   }
 
-  // Set sensible defaults based on framework
   const handleFrameworkChange = (value: string) => {
     setFramework(value)
     switch (value) {
@@ -97,10 +122,18 @@ export default function NewProjectPage() {
     }
   }
 
+  const handleRepoSelect = (fullName: string) => {
+    setSelectedRepo(fullName)
+    const repo = repos?.find(r => r.full_name === fullName)
+    if (repo) {
+      if (!name) setName(repo.name)
+      setProductionBranch(repo.default_branch)
+    }
+  }
+
   return (
     <DashboardLayout>
       <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6 lg:px-8">
-        {/* Back link */}
         <Link
           href="/projects"
           className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-6"
@@ -131,6 +164,145 @@ export default function NewProjectPage() {
                 </div>
               )}
 
+              {/* GitHub Repository Selection */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <Label>GitHub Repository</Label>
+                  {!useManualInput && hasGitHubLinked && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => mutateRepos()}
+                      disabled={reposLoading}
+                      className="h-8 text-xs"
+                    >
+                      <RefreshCw className={`h-3 w-3 mr-1 ${reposLoading ? "animate-spin" : ""}`} />
+                      Refresh
+                    </Button>
+                  )}
+                </div>
+
+                {!hasGitHubLinked ? (
+                  <div className="rounded-lg border border-dashed border-border p-4">
+                    <div className="flex flex-col items-center gap-3 text-center">
+                      <div className="rounded-full bg-muted p-2">
+                        <GitHubIcon className="h-5 w-5" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium">Connect GitHub to import repositories</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Sign in with GitHub to access your repositories
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => window.location.href = api.getGitHubOAuthUrl()}
+                      >
+                        <GitHubIcon className="h-4 w-4 mr-2" />
+                        Connect GitHub
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* Toggle between dropdown and manual input */}
+                    <div className="flex gap-2">
+                      <Button
+                        type="button"
+                        variant={!useManualInput ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setUseManualInput(false)}
+                      >
+                        Select from GitHub
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={useManualInput ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setUseManualInput(true)}
+                      >
+                        Enter manually
+                      </Button>
+                    </div>
+
+                    {useManualInput ? (
+                      <div className="space-y-2">
+                        <Input
+                          placeholder="owner/repo"
+                          value={manualRepo}
+                          onChange={(e) => setManualRepo(e.target.value)}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Enter the full repository path (e.g., octocat/hello-world)
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {reposError ? (
+                          <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-3">
+                            <div className="flex items-center gap-2 text-sm text-destructive">
+                              <AlertCircle className="h-4 w-4" />
+                              <span>Failed to load repositories. Please try again.</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {/* Search input */}
+                            <div className="relative">
+                              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                              <Input
+                                placeholder="Search repositories..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="pl-9"
+                              />
+                            </div>
+
+                            {/* Repos dropdown */}
+                            <Select value={selectedRepo} onValueChange={handleRepoSelect}>
+                              <SelectTrigger>
+                                <SelectValue placeholder={reposLoading ? "Loading repositories..." : "Select a repository"} />
+                              </SelectTrigger>
+                              <SelectContent className="max-h-[300px]">
+                                {reposLoading ? (
+                                  <div className="p-4 text-center text-sm text-muted-foreground">
+                                    Loading repositories...
+                                  </div>
+                                ) : filteredRepos.length === 0 ? (
+                                  <div className="p-4 text-center text-sm text-muted-foreground">
+                                    {searchQuery ? "No repositories found" : "No repositories available"}
+                                  </div>
+                                ) : (
+                                  filteredRepos.map((repo) => (
+                                    <SelectItem key={repo.id} value={repo.full_name}>
+                                      <div className="flex items-center gap-2">
+                                        {repo.private && <Lock className="h-3 w-3 text-muted-foreground" />}
+                                        <span>{repo.full_name}</span>
+                                      </div>
+                                    </SelectItem>
+                                  ))
+                                )}
+                              </SelectContent>
+                            </Select>
+
+                            {selectedRepo && (
+                              <RepoPreview repo={repos?.find(r => r.full_name === selectedRepo)} />
+                            )}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <p className="text-xs text-muted-foreground">
+                  Optional. Link a GitHub repository to enable automatic deployments.
+                </p>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="name">Project Name *</Label>
                 <Input
@@ -140,19 +312,6 @@ export default function NewProjectPage() {
                   onChange={(e) => setName(e.target.value)}
                   required
                 />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="github">GitHub Repository</Label>
-                <Input
-                  id="github"
-                  placeholder="owner/repo"
-                  value={githubRepo}
-                  onChange={(e) => setGithubRepo(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Optional. Link a GitHub repository to enable automatic deployments.
-                </p>
               </div>
 
               <div className="space-y-2">
@@ -220,5 +379,41 @@ export default function NewProjectPage() {
         </Card>
       </div>
     </DashboardLayout>
+  )
+}
+
+function RepoPreview({ repo }: { repo?: GitHubRepo }) {
+  if (!repo) return null
+
+  return (
+    <div className="rounded-lg border bg-muted/50 p-3">
+      <div className="flex items-start justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm">{repo.name}</span>
+            {repo.private && (
+              <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                <Lock className="h-3 w-3 mr-1" />
+                Private
+              </span>
+            )}
+          </div>
+          {repo.description && (
+            <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{repo.description}</p>
+          )}
+        </div>
+        <a 
+          href={repo.html_url} 
+          target="_blank" 
+          rel="noopener noreferrer"
+          className="text-xs text-muted-foreground hover:text-foreground"
+        >
+          View on GitHub
+        </a>
+      </div>
+      <div className="mt-2 text-xs text-muted-foreground">
+        Default branch: <span className="text-foreground">{repo.default_branch}</span>
+      </div>
+    </div>
   )
 }

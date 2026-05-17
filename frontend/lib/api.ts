@@ -154,6 +154,11 @@ class ApiClient {
     })
   }
 
+  // GitHub
+  async getGitHubRepos() {
+    return this.request<GitHubRepo[]>("/v1/github/repos")
+  }
+
   // Deployments
   async getDeployments() {
     return this.request<Deployment[]>("/v1/deployments")
@@ -314,4 +319,14 @@ export interface ApiKey {
   last_used_at?: string
   expires_at?: string
   created_at: string
+}
+
+export interface GitHubRepo {
+  id: number
+  name: string
+  full_name: string
+  description?: string
+  private: boolean
+  default_branch: string
+  html_url: string
 }
