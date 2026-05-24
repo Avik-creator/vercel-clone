@@ -146,11 +146,12 @@ services:
     container_name: buildkit
     restart: unless-stopped
     privileged: true
-    command: ["--addr", "tcp://0.0.0.0:1234", "--config", "/etc/buildkit/buildkitd.toml"]
+    command: ["--addr", "unix:///run/buildkit/buildkitd.sock", "--config", "/etc/buildkit/buildkitd.toml"]
     volumes:
       - ./infra/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
+      - /var/run/buildkit:/var/run/buildkit
     healthcheck:
-      test: ["CMD", "buildctl", "--addr", "tcp://localhost:1234", "debug", "workers"]
+      test: ["CMD", "buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "debug", "workers"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -243,6 +244,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - /var/run/buildkit:/var/run/buildkit
     tmpfs:
       - /tmp/builds:uid=1001,gid=1001
     env_file:
@@ -255,7 +257,8 @@ services:
       BUILD_REGISTRY_URL: registry:5000
       BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2
-      BUILDKIT_HOST: tcp://buildkit:1234
+      BUILDKIT_HOST: unix:///var/run/buildkit/buildkitd.sock
+    user: root
     networks:
       - default
       - build-net

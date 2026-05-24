@@ -30,12 +30,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libssl3 docker.io git && \
     rm -rf /var/lib/apt/lists/*
 
+# Install buildctl for BuildKit communication
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl -fsSL https://github.com/moby/buildkit/releases/download/v0.15.0/buildkit-v0.15.0.linux-arm64.tar.gz -o /tmp/buildkit.tar.gz && \
+    mkdir -p /tmp/buildkit && tar -xzf /tmp/buildkit.tar.gz -C /tmp/buildkit && \
+    cp -r /tmp/buildkit/bin/* /usr/local/bin/ && \
+    rm -rf /tmp/buildkit*
+
 WORKDIR /app
 COPY --from=builder /app/target/release/vercel-clone-worker .
 COPY --from=railpack-builder /usr/local/bin/railpack /usr/local/bin/railpack
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
     usermod -aG docker appuser && \
+    usermod -aG root appuser && \
     chown -R appuser:appuser /app
 
 USER appuser

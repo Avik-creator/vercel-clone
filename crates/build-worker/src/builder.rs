@@ -28,11 +28,13 @@ pub async fn run_build(
 
     // --output image tells BuildKit to push directly to the registry (type=image,push=true).
     // No tarball is transferred back to the worker client.
+    let mut cmd = Command::new("railpack");
+    cmd.args(["build", "--name", &build_image_ref, "--output", "image", "."]);
+    cmd.current_dir(work_dir);
+    cmd.env("BUILDKIT_HOST", "unix:///var/run/buildkit/buildkitd.sock");
     run_logged_command(
         "railpack build",
-        Command::new("railpack")
-            .args(["build", "--name", &build_image_ref, "--output", "image", "."])
-            .current_dir(work_dir),
+        &mut cmd,
         job.deployment_id,
         nats,
         build_timeout,
