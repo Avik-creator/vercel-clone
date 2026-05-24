@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::config::host_only;
+
 /// Manages deployment containers built as Railpack images.
 pub struct DeploymentServers {
     containers: Arc<Mutex<HashMap<Uuid, RunningContainer>>>,
@@ -58,6 +60,7 @@ impl DeploymentServers {
 
         let router_name = format!("serve-{}", deployment_id.simple());
         let entrypoint = if self.serve_tls { "websecure" } else { "web" };
+        let traefik_host = host_only(host);
 
         let mut args: Vec<String> = vec![
             "run".into(),
@@ -72,8 +75,9 @@ impl DeploymentServers {
             "-e".into(), "PORT=3000".into(),
             "-l".into(), "traefik.enable=true".into(),
             "-l".into(), format!("traefik.docker.network={}", self.docker_network),
-            "-l".into(), format!("traefik.http.routers.{}.rule=Host(`{}`)", router_name, host),
+            "-l".into(), format!("traefik.http.routers.{}.rule=Host(`{}`)", router_name, traefik_host),
             "-l".into(), format!("traefik.http.routers.{}.entrypoints={}", router_name, entrypoint),
+            "-l".into(), format!("traefik.http.routers.{}.service={}", router_name, router_name),
         ];
 
         if self.serve_tls {
@@ -109,7 +113,7 @@ impl DeploymentServers {
             },
         );
 
-        tracing::info!(%deployment_id, container = %container_name, %host, %entrypoint, "started deployment container");
+        tracing::info!(%deployment_id, container = %container_name, host = %traefik_host, %entrypoint, "started deployment container");
         Ok(())
     }
 

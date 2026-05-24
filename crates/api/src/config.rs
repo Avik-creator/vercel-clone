@@ -65,16 +65,22 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn load() -> anyhow::Result<Self> {
-        let cfg = config::Config::builder()
+        dotenvy::dotenv().ok();
+        let mut cfg: Self = config::Config::builder()
             .add_source(config::Environment::default().separator("__"))
             .build()?
             .try_deserialize()?;
+        cfg.base_domain = host_only(&cfg.base_domain);
         Ok(cfg)
     }
 
     pub fn is_production(&self) -> bool {
         self.env == "production"
     }
+}
+
+pub fn host_only(domain: &str) -> String {
+    domain.split(':').next().unwrap_or(domain).to_string()
 }
 
 fn default_host() -> String {

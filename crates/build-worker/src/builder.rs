@@ -28,6 +28,7 @@ pub async fn run_build(
 
     let node_version =
         std::env::var("NIXPACKS_NODE_VERSION").unwrap_or_else(|_| "22".to_string());
+    let install_cmd = detect_install_command(work_dir).await;
     let mut nixpacks = Command::new("nixpacks");
     nixpacks.args([
         "build",
@@ -35,8 +36,13 @@ pub async fn run_build(
         ".",
         "--env",
         &format!("NIXPACKS_NODE_VERSION={node_version}"),
+        "--install-cmd",
+        &install_cmd,
         ".",
     ]);
+    if let Some(build_cmd) = job.build_command.as_deref().filter(|c| !c.is_empty()) {
+        nixpacks.args(["--build-cmd", build_cmd]);
+    }
     nixpacks.current_dir(work_dir);
     run_logged_command(
         "nixpacks plan",
@@ -82,6 +88,25 @@ fn image_tag(registry_url: &str, deployment_id: uuid::Uuid) -> String {
         registry_url.trim_end_matches('/'),
         deployment_id
     )
+}
+
+async fn detect_install_command(work_dir: &Path) -> String {
+    if file_exists(work_dir, "pnpm-lock.yaml").await {
+        return "pnpm install".into();
+    }
+    if file_exists(work_dir, "yarn.lock").await {
+        return "yarn install".into();
+    }
+    if file_exists(work_dir, "bun.lockb").await || file_exists(work_dir, "bun.lock").await {
+        return "bun install".into();
+    }
+    "npm install".into()
+}
+
+async fn file_exists(dir: &Path, name: &str) -> bool {
+    tokio::fs::try_exists(dir.join(name))
+        .await
+        .unwrap_or(false)
 }
 
 async fn clone_repo(job: &BuildJob, work_dir: &Path, nats: &WorkerNats) -> anyhow::Result<()> {
@@ -237,5 +262,27 @@ mod tests {
             image_tag("localhost:5000", deployment_id),
             "localhost:5000/deployment-00000000-0000-0000-0000-000000000001:latest"
         );
+    }
+
+    #[tokio::test]
+    async fn detect_install_command_prefers_pnpm_lockfile() {
+        let dir = std::env::temp_dir().join(format!("nixpacks-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("pnpm-lock.yaml"), "").await.unwrap();
+
+        assert_eq!(detect_install_command(&dir).await, "pnpm install");
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn detect_install_command_uses_npm_install_by_default() {
+        let dir = std::env::temp_dir().join(format!("nixpacks-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&dir).await.unwrap();
+        tokio::fs::write(dir.join("package-lock.json"), "").await.unwrap();
+
+        assert_eq!(detect_install_command(&dir).await, "npm install");
+
+        let _ = tokio::fs::remove_dir_all(&dir).await;
     }
 }
