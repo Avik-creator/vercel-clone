@@ -65,6 +65,8 @@ impl DeploymentServers {
         let mut args: Vec<String> = vec![
             "run".into(),
             "-d".into(),
+            "--pull".into(),
+            "always".into(),
             "--name".into(), container_name.clone(),
             "--network".into(), self.docker_network.clone(),
             "--cpus".into(), "0.5".into(),
@@ -93,13 +95,23 @@ impl DeploymentServers {
             image_ref.into(),
         ]);
 
-        let status = tokio::process::Command::new("docker")
+        let output = tokio::process::Command::new("docker")
             .args(&args)
-            .status()
+            .output()
             .await?;
 
-        if !status.success() {
-            anyhow::bail!("failed to start deployment container for {}", deployment_id);
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let detail = if stderr.is_empty() {
+                format!("exit code {}", output.status.code().unwrap_or(-1))
+            } else {
+                stderr
+            };
+            anyhow::bail!(
+                "failed to start deployment container for {}: {}",
+                deployment_id,
+                detail
+            );
         }
 
         wait_for_container(&container_name, Duration::from_secs(60)).await?;

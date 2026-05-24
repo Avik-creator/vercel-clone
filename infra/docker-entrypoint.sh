@@ -15,6 +15,12 @@ add_user_to_socket_group() {
 
 add_user_to_socket_group /var/run/docker.sock dockerhost
 
+if [ -S /var/run/docker.sock ]; then
+  if ! gosu appuser docker info >/dev/null 2>&1; then
+    chmod 666 /var/run/docker.sock 2>/dev/null || true
+  fi
+fi
+
 if [ -S /var/run/buildkit/buildkitd.sock ]; then
   chmod 666 /var/run/buildkit/buildkitd.sock 2>/dev/null || true
 fi

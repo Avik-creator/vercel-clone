@@ -4,7 +4,7 @@ import Link from "next/link"
 import { Project, Deployment } from "@/lib/api"
 import { Card, CardContent } from "@/components/ui/card"
 import { DeploymentStatusBadge } from "@/components/deployment-status-badge"
-import { formatRelativeTime, truncateCommitSha } from "@/lib/utils"
+import { formatRelativeTime, truncateCommitSha, deploymentPublicUrl } from "@/lib/utils"
 import { GitBranch, GitCommit, ExternalLink, MoreHorizontal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -59,7 +59,7 @@ export function ProjectCard({ project, latestDeployment }: ProjectCardProps) {
 
             {latestDeployment?.url && latestDeployment.state === "ready" && (
               <a
-                href={`https://${latestDeployment.url}`}
+                href={deploymentPublicUrl(latestDeployment.url)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-2 inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"

@@ -51,5 +51,5 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
     chown appuser:appuser /home/appuser && \
     chown -R appuser:appuser /app
 
-ENTRYPOINT ["docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["./vercel-clone-worker"]

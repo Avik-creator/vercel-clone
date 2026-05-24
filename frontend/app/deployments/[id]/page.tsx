@@ -22,7 +22,7 @@ import {
   RotateCw,
   XCircle
 } from "lucide-react"
-import { formatRelativeTime, truncateCommitSha } from "@/lib/utils"
+import { formatRelativeTime, truncateCommitSha, deploymentPublicUrl } from "@/lib/utils"
 import { mutate } from "swr"
 
 export default function DeploymentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -118,7 +118,7 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
                 {deployment.url && deployment.state === "ready" && (
                   <Button variant="outline" asChild>
                     <a
-                      href={`https://${deployment.url}`}
+                      href={deploymentPublicUrl(deployment.url)}
                       target="_blank"
                       rel="noopener noreferrer"
                     >
@@ -225,12 +225,12 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
                 </CardHeader>
                 <CardContent>
                   <a
-                    href={`https://${deployment.url}`}
+                    href={deploymentPublicUrl(deployment.url)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-2 text-foreground hover:underline font-mono text-sm"
                   >
-                    https://{deployment.url}
+                    {deploymentPublicUrl(deployment.url)}
                     <ExternalLink className="h-4 w-4" />
                   </a>
                 </CardContent>

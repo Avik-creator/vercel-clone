@@ -21,7 +21,7 @@ import {
   Clock
 } from "lucide-react"
 import { GitHubIcon } from "@/components/icons/github"
-import { formatRelativeTime } from "@/lib/utils"
+import { formatRelativeTime, deploymentPublicUrl } from "@/lib/utils"
 
 export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
@@ -95,7 +95,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
                 {productionDeployment?.url && (
                   <Button variant="outline" asChild>
                     <a
-                      href={`https://${productionDeployment.url}`}
+                      href={deploymentPublicUrl(productionDeployment.url)}
                       target="_blank"
                       rel="noopener noreferrer"
                     >

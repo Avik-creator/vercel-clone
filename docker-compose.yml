@@ -198,6 +198,7 @@ services:
       - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra/docker-entrypoint.sh:/usr/local/bin/docker-entrypoint.sh:ro
       - ./infra/nats/certs:/certs:ro
     tmpfs:
       - /tmp/vercel-clone-deployments:uid=1001,gid=1001

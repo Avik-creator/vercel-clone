@@ -3,7 +3,7 @@
 import Link from "next/link"
 import { Deployment } from "@/lib/api"
 import { DeploymentStatusBadge } from "@/components/deployment-status-badge"
-import { formatRelativeTime, truncateCommitSha, truncateString } from "@/lib/utils"
+import { formatRelativeTime, truncateCommitSha, truncateString, deploymentPublicUrl } from "@/lib/utils"
 import { GitBranch, GitCommit, ExternalLink, MoreHorizontal, Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -106,7 +106,7 @@ export function DeploymentRow({ deployment, showProject, projectName }: Deployme
         {deployment.url && deployment.state === "ready" && (
           <Button variant="outline" size="sm" asChild>
             <a
-              href={`https://${deployment.url}`}
+              href={deploymentPublicUrl(deployment.url)}
               target="_blank"
               rel="noopener noreferrer"
             >
