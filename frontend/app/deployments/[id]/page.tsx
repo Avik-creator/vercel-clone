@@ -20,6 +20,7 @@ import {
   Clock,
   Terminal,
   RotateCw,
+  RefreshCw,
   XCircle
 } from "lucide-react"
 import { formatRelativeTime, truncateCommitSha, deploymentPublicUrl } from "@/lib/utils"
@@ -66,8 +67,19 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
     }
   }
 
+  const handleRetry = async () => {
+    if (!confirm("Retry this deployment with the same commit?")) return
+    try {
+      await api.retryDeployment(id)
+      mutate(`deployment-${id}`)
+    } catch (error) {
+      console.error("Failed to retry:", error)
+    }
+  }
+
   const canCancel = deployment && ["queued", "building"].includes(deployment.state)
   const canPromote = deployment?.state === "ready" && !deployment.is_production
+  const canRetry = deployment && ["error", "cancelled"].includes(deployment.state)
 
   return (
     <DashboardLayout>
@@ -131,6 +143,12 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
                   <Button variant="outline" onClick={handlePromote}>
                     <RotateCw className="h-4 w-4 mr-2" />
                     Promote
+                  </Button>
+                )}
+                {canRetry && (
+                  <Button variant="outline" onClick={handleRetry}>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Retry
                   </Button>
                 )}
                 {canCancel && (

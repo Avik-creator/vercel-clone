@@ -43,6 +43,7 @@ impl DeploymentServers {
         deployment_id: Uuid,
         image_ref: &str,
         host: &str,
+        runtime_env: &HashMap<String, String>,
     ) -> anyhow::Result<()> {
         {
             let mut containers = self.containers.lock().await;
@@ -74,13 +75,21 @@ impl DeploymentServers {
             "--pids-limit".into(), "512".into(),
             "--cap-drop".into(), "ALL".into(),
             "--security-opt".into(), "no-new-privileges".into(),
+        ];
+
+        for (key, value) in runtime_env {
+            args.push("-e".into());
+            args.push(format!("{key}={value}"));
+        }
+
+        args.extend([
             "-e".into(), "PORT=3000".into(),
             "-l".into(), "traefik.enable=true".into(),
             "-l".into(), format!("traefik.docker.network={}", self.docker_network),
             "-l".into(), format!("traefik.http.routers.{}.rule=Host(`{}`)", router_name, traefik_host),
             "-l".into(), format!("traefik.http.routers.{}.entrypoints={}", router_name, entrypoint),
             "-l".into(), format!("traefik.http.routers.{}.service={}", router_name, router_name),
-        ];
+        ]);
 
         if self.serve_tls {
             args.extend([

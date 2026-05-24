@@ -2,6 +2,7 @@ use crate::{
     AppState,
     errors::{AppError, AppResult},
     models::{BuildJob, EnvVarEntry, EnvVarTarget},
+    services::projects as project_service,
 };
 use secrecy::ExposeSecret;
 use serde_json::Value;
@@ -150,11 +151,7 @@ fn is_production_deployment(branch: &str, production_branch: &str) -> bool {
 }
 
 fn build_env_map(env_vars: Vec<EnvVarEntry>) -> HashMap<String, String> {
-    env_vars
-        .into_iter()
-        .filter(|entry| matches!(entry.target, EnvVarTarget::Build | EnvVarTarget::All))
-        .map(|entry| (entry.key, entry.value))
-        .collect()
+    project_service::env_map_for_targets(&env_vars, &[EnvVarTarget::Build, EnvVarTarget::All])
 }
 
 pub async fn handle_pull_request(_state: &AppState, payload: Value) -> AppResult<()> {

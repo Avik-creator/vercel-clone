@@ -50,6 +50,14 @@ pub struct UpdateEnvVarsRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ImportEnvRequest {
+    pub content: String,
+    pub target: Option<EnvVarTarget>,
+    /// When true (default), upsert parsed keys into existing vars. When false, replace all.
+    pub merge: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct CreateProjectRequest {
     pub name: String,
     pub github_repo: Option<String>,

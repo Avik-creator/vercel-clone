@@ -4,7 +4,7 @@ import Link from "next/link"
 import { Deployment } from "@/lib/api"
 import { DeploymentStatusBadge } from "@/components/deployment-status-badge"
 import { formatRelativeTime, truncateCommitSha, truncateString, deploymentPublicUrl } from "@/lib/utils"
-import { GitBranch, GitCommit, ExternalLink, MoreHorizontal, Clock } from "lucide-react"
+import { GitBranch, GitCommit, ExternalLink, MoreHorizontal, Clock, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -56,8 +56,24 @@ export function DeploymentRow({ deployment, showProject, projectName }: Deployme
     }
   }
 
+  const handleRetry = async () => {
+    if (!confirm("Retry this deployment with the same commit?")) return
+    setIsLoading(true)
+    try {
+      await api.retryDeployment(deployment.id)
+      mutate(`deployment-${deployment.id}`)
+      mutate(`project-${deployment.project_id}-deployments`)
+      mutate("deployments")
+    } catch (error) {
+      console.error("Failed to retry deployment:", error)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   const canCancel = ["queued", "building"].includes(deployment.state)
   const canPromote = deployment.state === "ready" && !deployment.is_production
+  const canRetry = ["error", "cancelled"].includes(deployment.state)
 
   return (
     <div className="flex items-center gap-4 py-4 px-4 hover:bg-muted/50 transition-colors border-b border-border last:border-0">
@@ -130,7 +146,12 @@ export function DeploymentRow({ deployment, showProject, projectName }: Deployme
             <DropdownMenuItem asChild>
               <Link href={`/deployments/${deployment.id}#logs`}>View Logs</Link>
             </DropdownMenuItem>
-            {(canCancel || canPromote) && <DropdownMenuSeparator />}
+            {(canCancel || canPromote || canRetry) && <DropdownMenuSeparator />}
+            {canRetry && (
+              <DropdownMenuItem onClick={handleRetry}>
+                Retry Deployment
+              </DropdownMenuItem>
+            )}
             {canPromote && (
               <DropdownMenuItem onClick={handlePromote}>
                 Promote to Production

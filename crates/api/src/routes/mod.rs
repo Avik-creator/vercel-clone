@@ -38,10 +38,12 @@ pub fn router(state: AppState) -> Router {
                 .post(projects::add_env),
         )
         .route("/v1/projects/{id}/env/{key}", delete(projects::delete_env))
+        .route("/v1/projects/{id}/env/import", post(projects::import_env))
         .route("/v1/projects/{id}/link", post(projects::link_github))
         .route("/v1/deployments", get(deployments::list))
         .route("/v1/deployments/{id}", get(deployments::get))
         .route("/v1/deployments/{id}/cancel", post(deployments::cancel))
+        .route("/v1/deployments/{id}/retry", post(deployments::retry))
         .route("/v1/deployments/{id}/promote", post(deployments::promote))
         .route("/v1/deployments/{id}/logs", get(deployments::stream_logs))
         .route(

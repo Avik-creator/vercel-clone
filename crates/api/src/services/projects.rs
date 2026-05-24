@@ -1,7 +1,10 @@
 use crate::{
     AppState,
     errors::{AppResult, NotFoundExt},
-    models::{CreateProjectRequest, EnvVarEntry, LinkGithubRequest, Project, UpdateProjectRequest},
+    models::{
+        CreateProjectRequest, EnvVarEntry, EnvVarTarget, LinkGithubRequest, Project,
+        UpdateProjectRequest,
+    },
 };
 use uuid::Uuid;
 
@@ -238,6 +241,92 @@ pub async fn link_github(
     Ok(project)
 }
 
+pub fn env_map_for_targets(
+    env_vars: &[EnvVarEntry],
+    targets: &[EnvVarTarget],
+) -> std::collections::HashMap<String, String> {
+    env_vars
+        .iter()
+        .filter(|entry| targets.contains(&entry.target))
+        .map(|entry| (entry.key.clone(), entry.value.clone()))
+        .collect()
+}
+
+pub fn parse_dotenv(content: &str) -> AppResult<Vec<EnvVarEntry>> {
+    let mut entries = Vec::new();
+
+    for (line_no, raw_line) in content.lines().enumerate() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        let line = line.strip_prefix("export ").unwrap_or(line).trim();
+        let Some((key, value)) = line.split_once('=') else {
+            return Err(crate::errors::AppError::BadRequest(format!(
+                "invalid .env syntax on line {}: expected KEY=VALUE",
+                line_no + 1
+            )));
+        };
+
+        let key = key.trim();
+        if key.is_empty() {
+            return Err(crate::errors::AppError::BadRequest(format!(
+                "invalid .env syntax on line {}: empty key",
+                line_no + 1
+            )));
+        }
+
+        let value = parse_dotenv_value(value.trim());
+        entries.push(EnvVarEntry {
+            key: key.to_string(),
+            value,
+            target: EnvVarTarget::All,
+        });
+    }
+
+    Ok(entries)
+}
+
+fn parse_dotenv_value(raw: &str) -> String {
+    if raw.len() >= 2 {
+        let bytes = raw.as_bytes();
+        let quote = bytes[0];
+        if (quote == b'"' || quote == b'\'') && bytes[bytes.len() - 1] == quote {
+            return raw[1..raw.len() - 1].to_string();
+        }
+    }
+    raw.to_string()
+}
+
+pub async fn import_env_from_dotenv(
+    state: &AppState,
+    user_id: Uuid,
+    project_id: Uuid,
+    content: &str,
+    target: EnvVarTarget,
+    merge: bool,
+) -> AppResult<Vec<EnvVarEntry>> {
+    let mut parsed = parse_dotenv(content)?;
+    for entry in &mut parsed {
+        entry.target = target.clone();
+    }
+
+    if merge {
+        let mut env_vars = get_env_vars(state, user_id, project_id).await?;
+        for entry in parsed {
+            if let Some(existing) = env_vars.iter_mut().find(|v| v.key == entry.key) {
+                *existing = entry;
+            } else {
+                env_vars.push(entry);
+            }
+        }
+        update_env_vars(state, user_id, project_id, env_vars).await
+    } else {
+        update_env_vars(state, user_id, project_id, parsed).await
+    }
+}
+
 fn slugify(name: &str) -> String {
     name.to_lowercase()
         .chars()
@@ -245,4 +334,27 @@ fn slugify(name: &str) -> String {
         .collect::<String>()
         .trim_matches('-')
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_dotenv_reads_basic_pairs() {
+        let content = "FOO=bar\n# comment\nexport BAZ=\"hello world\"\n";
+        let parsed = parse_dotenv(content).unwrap();
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].key, "FOO");
+        assert_eq!(parsed[0].value, "bar");
+        assert_eq!(parsed[1].key, "BAZ");
+        assert_eq!(parsed[1].value, "hello world");
+    }
+
+    #[test]
+    fn parse_dotenv_rejects_invalid_line() {
+        let err = parse_dotenv("NOT_VALID").unwrap_err();
+        assert!(err.to_string().contains("KEY=VALUE"));
+    }
 }

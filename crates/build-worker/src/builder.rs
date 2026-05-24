@@ -43,6 +43,9 @@ pub async fn run_build(
     if let Some(build_cmd) = job.build_command.as_deref().filter(|c| !c.is_empty()) {
         nixpacks.args(["--build-cmd", build_cmd]);
     }
+    for (key, value) in &job.env_vars {
+        nixpacks.args(["--env", &format!("{key}={value}")]);
+    }
     nixpacks.current_dir(work_dir);
     run_logged_command(
         "nixpacks plan",

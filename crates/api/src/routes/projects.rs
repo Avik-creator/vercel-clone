@@ -3,8 +3,8 @@ use crate::{
     errors::AppResult,
     middleware::auth::AuthUser,
     models::{
-        CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, LinkGithubRequest,
-        UpdateEnvVarsRequest, UpdateProjectRequest,
+        CreateEnvVarRequest, CreateProjectRequest, EnvVarEntry, EnvVarTarget, ImportEnvRequest,
+        LinkGithubRequest, UpdateEnvVarsRequest, UpdateProjectRequest,
     },
     services::projects as project_service,
 };
@@ -100,6 +100,26 @@ pub async fn delete_env(
     Path((id, key)): Path<(Uuid, String)>,
 ) -> AppResult<Json<Value>> {
     let env_vars = project_service::delete_env_var(&state, user.id, id, &key).await?;
+    Ok(Json(serde_json::to_value(env_vars).unwrap()))
+}
+
+pub async fn import_env(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ImportEnvRequest>,
+) -> AppResult<Json<Value>> {
+    let target = body.target.unwrap_or(EnvVarTarget::All);
+    let merge = body.merge.unwrap_or(true);
+    let env_vars = project_service::import_env_from_dotenv(
+        &state,
+        user.id,
+        id,
+        &body.content,
+        target,
+        merge,
+    )
+    .await?;
     Ok(Json(serde_json::to_value(env_vars).unwrap()))
 }
 

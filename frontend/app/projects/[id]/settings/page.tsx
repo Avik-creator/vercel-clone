@@ -13,7 +13,7 @@ import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { ArrowLeft, Plus, Trash2, Eye, EyeOff, AlertTriangle } from "lucide-react"
+import { ArrowLeft, Plus, Trash2, Eye, EyeOff, AlertTriangle, Upload, FileText } from "lucide-react"
 import { mutate } from "swr"
 
 export default function ProjectSettingsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -38,6 +38,13 @@ export default function ProjectSettingsPage({ params }: { params: Promise<{ id: 
   const [newEnvTarget, setNewEnvTarget] = useState<EnvVarTarget>("all")
   const [showValues, setShowValues] = useState<Record<string, boolean>>({})
   const [isAddingEnv, setIsAddingEnv] = useState(false)
+
+  // .env import
+  const [dotenvContent, setDotenvContent] = useState("")
+  const [importTarget, setImportTarget] = useState<EnvVarTarget>("all")
+  const [importMerge, setImportMerge] = useState(true)
+  const [isImportingEnv, setIsImportingEnv] = useState(false)
+  const [importError, setImportError] = useState("")
 
   // Delete dialog
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -116,6 +123,33 @@ export default function ProjectSettingsPage({ params }: { params: Promise<{ id: 
     } catch (err) {
       console.error("Failed to delete env var:", err)
     }
+  }
+
+  const handleImportEnv = async () => {
+    if (!dotenvContent.trim()) return
+    setImportError("")
+    setIsImportingEnv(true)
+    try {
+      await api.importEnvVars(id, {
+        content: dotenvContent,
+        target: importTarget,
+        merge: importMerge,
+      })
+      mutate(`project-${id}-env`)
+      setDotenvContent("")
+    } catch (err) {
+      setImportError(err instanceof Error ? err.message : "Failed to import .env")
+    } finally {
+      setIsImportingEnv(false)
+    }
+  }
+
+  const handleEnvFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const text = await file.text()
+    setDotenvContent(text)
+    e.target.value = ""
   }
 
   const handleDeleteProject = async () => {
@@ -242,10 +276,71 @@ export default function ProjectSettingsPage({ params }: { params: Promise<{ id: 
             <CardHeader>
               <CardTitle>Environment Variables</CardTitle>
               <CardDescription>
-                Manage environment variables for your deployments
+                Build vars are passed to Nixpacks; runtime vars are injected when the preview container starts. Import a .env file or add keys manually.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Import from .env */}
+              <div className="space-y-3 rounded-lg border border-border p-4">
+                <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                  <FileText className="h-4 w-4" />
+                  Import from .env file
+                </div>
+                <textarea
+                  value={dotenvContent}
+                  onChange={(e) => setDotenvContent(e.target.value)}
+                  placeholder={"DATABASE_URL=postgres://...\nNEXT_PUBLIC_API_URL=https://..."}
+                  className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+                {importError && (
+                  <div className="p-3 text-sm text-destructive bg-destructive/10 rounded-md">
+                    {importError}
+                  </div>
+                )}
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                  <Select value={importTarget} onValueChange={(v) => setImportTarget(v as EnvVarTarget)}>
+                    <SelectTrigger className="w-32">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="build">Build</SelectItem>
+                      <SelectItem value="runtime">Runtime</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <input
+                      type="checkbox"
+                      checked={importMerge}
+                      onChange={(e) => setImportMerge(e.target.checked)}
+                      className="rounded border-input"
+                    />
+                    Merge with existing
+                  </label>
+                  <div className="flex gap-2 sm:ml-auto">
+                    <Button type="button" variant="outline" asChild>
+                      <label className="cursor-pointer">
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload file
+                        <input
+                          type="file"
+                          accept=".env,.env.local,.env.production,text/plain"
+                          className="hidden"
+                          onChange={handleEnvFileUpload}
+                        />
+                      </label>
+                    </Button>
+                    <Button
+                      type="button"
+                      onClick={handleImportEnv}
+                      disabled={isImportingEnv || !dotenvContent.trim()}
+                    >
+                      {isImportingEnv ? "Importing..." : "Import"}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
               {/* Add new env var */}
               <div className="flex flex-col sm:flex-row gap-3">
                 <Input

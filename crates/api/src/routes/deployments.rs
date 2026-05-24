@@ -73,6 +73,15 @@ pub async fn promote(
     Ok(Json(serde_json::json!({ "promoted": true })))
 }
 
+pub async fn retry(
+    State(state): State<AppState>,
+    AuthUser(user): AuthUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    let deploy = deploy_service::retry(&state, user.id, id).await?;
+    Ok(Json(to_json_value(deploy)?))
+}
+
 pub async fn stream_logs(
     State(state): State<AppState>,
     AuthUser(_user): AuthUser,

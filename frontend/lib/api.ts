@@ -146,6 +146,16 @@ class ApiClient {
     })
   }
 
+  async importEnvVars(
+    projectId: string,
+    data: { content: string; target?: EnvVarTarget; merge?: boolean }
+  ) {
+    return this.request<EnvVarEntry[]>(`/v1/projects/${projectId}/env/import`, {
+      method: "POST",
+      body: data,
+    })
+  }
+
   // GitHub linking
   async linkGitHub(projectId: string, data: { github_repo: string; installation_id: number }) {
     return this.request<Project>(`/v1/projects/${projectId}/link`, {
@@ -181,6 +191,12 @@ class ApiClient {
 
   async cancelDeployment(id: string) {
     return this.request<{ cancelled: boolean }>(`/v1/deployments/${id}/cancel`, {
+      method: "POST",
+    })
+  }
+
+  async retryDeployment(id: string) {
+    return this.request<Deployment>(`/v1/deployments/${id}/retry`, {
       method: "POST",
     })
   }

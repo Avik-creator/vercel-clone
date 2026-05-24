@@ -3,7 +3,7 @@ use crate::{
     errors::{AppError, AppResult, NotFoundExt},
     models::{
         BuildCallbackRequest, BuildJob, CreateDeploymentRequest, Deployment, DeploymentState,
-        EnvVarTarget,
+        EnvVarEntry, EnvVarTarget,
     },
     services::github as github_service,
     services::projects as project_service,
@@ -75,7 +75,6 @@ pub async fn create(
     .or_not_found("project")?;
 
     let _project_id: Uuid = project.try_get("id")?;
-    let github_repo: Option<String> = project.try_get("github_repo")?;
     let github_installation_id: Option<i64> =
         project.try_get("github_installation_id").ok().flatten();
 
@@ -120,37 +119,27 @@ pub async fn create(
 
     // Fetch env vars for this project (build + all targets)
     let env_var_entries = project_service::get_env_vars(state, user_id, project_id).await?;
-    let env_vars: HashMap<String, String> = env_var_entries
-        .into_iter()
-        .filter(|e| matches!(e.target, EnvVarTarget::Build | EnvVarTarget::All))
-        .map(|e| (e.key, e.value))
-        .collect();
+    let env_vars = project_service::env_map_for_targets(
+        &env_var_entries,
+        &[EnvVarTarget::Build, EnvVarTarget::All],
+    );
 
-    // Dispatch build job via NATS JetStream
-    let git_url = if let Some(ref repo) = github_repo {
-        format!("https://github.com/{}.git", repo)
-    } else {
-        String::new()
-    };
-
-    let build_job = BuildJob {
-        deployment_id: deployment.id,
+    let build_job = assemble_build_job(
         project_id,
-        git_url,
-        commit_sha: req.commit_sha.clone(),
-        branch: req.branch.clone(),
-        build_command: project.try_get("build_command").ok().flatten(),
-        output_dir: project.try_get("output_dir").ok().flatten(),
+        deployment.id,
+        &req.commit_sha,
+        &req.branch,
+        &project,
         github_token,
         env_vars,
-    };
+    )?;
 
     state.nats.publish_job(&build_job).await?;
 
     tracing::info!(
         deployment_id = %deployment.id,
         commit = %req.commit_sha,
-        repo = ?github_repo,
+        repo = ?project.try_get::<Option<String>, _>("github_repo").ok().flatten(),
         env_var_count = build_job.env_vars.len(),
         "build job published to NATS"
     );
@@ -194,6 +183,158 @@ pub async fn cancel(state: &AppState, user_id: Uuid, id: Uuid) -> AppResult<()> 
         ));
     }
     Ok(())
+}
+
+pub async fn retry(state: &AppState, user_id: Uuid, id: Uuid) -> AppResult<Deployment> {
+    let deploy = get_for_user(state, user_id, id).await?;
+
+    if !matches!(
+        deploy.state,
+        DeploymentState::Error | DeploymentState::Cancelled
+    ) {
+        return Err(AppError::BadRequest(
+            "only failed or cancelled deployments can be retried".into(),
+        ));
+    }
+
+    let project = sqlx::query(
+        "SELECT id, build_command, output_dir, github_repo, github_installation_id
+         FROM projects WHERE id = $1 AND owner_id = $2",
+    )
+    .bind(deploy.project_id)
+    .bind(user_id)
+    .fetch_one(&*state.db)
+    .await
+    .or_not_found("project")?;
+
+    let github_installation_id: Option<i64> =
+        project.try_get("github_installation_id").ok().flatten();
+    let github_token = if let Some(inst_id) = github_installation_id {
+        match github_service::get_installation_token(state, inst_id).await {
+            Ok(token) => Some(token),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to get installation token for retry");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let rows = sqlx::query(
+        r#"
+        UPDATE deployments SET
+            state = 'queued',
+            build_started_at = NULL,
+            build_finished_at = NULL,
+            image_ref = NULL,
+            build_log = NULL,
+            updated_at = NOW()
+        WHERE id = $1
+          AND state IN ('error', 'cancelled')
+          AND project_id IN (SELECT id FROM projects WHERE owner_id = $2)
+        "#,
+    )
+    .bind(id)
+    .bind(user_id)
+    .execute(&*state.db)
+    .await?
+    .rows_affected();
+
+    if rows == 0 {
+        return Err(AppError::NotFound(
+            "deployment not found or not retriable".into(),
+        ));
+    }
+
+    sqlx::query("DELETE FROM build_log_lines WHERE deployment_id = $1")
+        .bind(id)
+        .execute(&*state.db)
+        .await?;
+
+    state.nats.close_log_sender(id).await;
+
+    let env_var_entries =
+        project_service::get_env_vars(state, user_id, deploy.project_id).await?;
+    let env_vars = project_service::env_map_for_targets(
+        &env_var_entries,
+        &[EnvVarTarget::Build, EnvVarTarget::All],
+    );
+
+    let build_job = assemble_build_job(
+        deploy.project_id,
+        id,
+        &deploy.commit_sha,
+        &deploy.branch,
+        &project,
+        github_token,
+        env_vars,
+    )?;
+
+    state.nats.publish_job(&build_job).await?;
+
+    tracing::info!(
+        deployment_id = %id,
+        commit = %deploy.commit_sha,
+        "deployment retry published to NATS"
+    );
+
+    get_for_user(state, user_id, id).await
+}
+
+pub async fn runtime_env_for_deployment(
+    db: &crate::db::Database,
+    deployment_id: Uuid,
+) -> AppResult<HashMap<String, String>> {
+    let project_id = sqlx::query_scalar::<_, Uuid>(
+        "SELECT project_id FROM deployments WHERE id = $1",
+    )
+    .bind(deployment_id)
+    .fetch_one(&**db)
+    .await
+    .or_not_found("deployment")?;
+
+    let env_vars: Vec<EnvVarEntry> = sqlx::query_scalar::<_, serde_json::Value>(
+        "SELECT env_vars FROM projects WHERE id = $1",
+    )
+    .bind(project_id)
+    .fetch_one(&**db)
+    .await
+    .map(|json| serde_json::from_value(json).unwrap_or_default())
+    .or_not_found("project")?;
+
+    Ok(project_service::env_map_for_targets(
+        &env_vars,
+        &[EnvVarTarget::Runtime, EnvVarTarget::All],
+    ))
+}
+
+fn assemble_build_job(
+    project_id: Uuid,
+    deployment_id: Uuid,
+    commit_sha: &str,
+    branch: &str,
+    project: &sqlx::postgres::PgRow,
+    github_token: Option<String>,
+    env_vars: HashMap<String, String>,
+) -> AppResult<BuildJob> {
+    let github_repo: Option<String> = project.try_get("github_repo")?;
+    let git_url = github_repo
+        .as_ref()
+        .map(|repo| format!("https://github.com/{}.git", repo))
+        .unwrap_or_default();
+
+    Ok(BuildJob {
+        deployment_id,
+        project_id,
+        git_url,
+        commit_sha: commit_sha.to_string(),
+        branch: branch.to_string(),
+        build_command: project.try_get("build_command").ok().flatten(),
+        output_dir: project.try_get("output_dir").ok().flatten(),
+        github_token,
+        env_vars,
+    })
 }
 
 pub async fn promote_to_production(state: &AppState, user_id: Uuid, id: Uuid) -> AppResult<()> {

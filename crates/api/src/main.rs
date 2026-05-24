@@ -328,8 +328,19 @@ async fn subscribe_build_results(
         if matches!(result.state, crate::models::DeploymentState::Ready) {
             if let Some(image_ref) = result.image_ref.as_deref() {
                 if let Some(host) = deployment_host(&db, result.deployment_id).await? {
+                    let runtime_env = crate::services::deployments::runtime_env_for_deployment(
+                        &db,
+                        result.deployment_id,
+                    )
+                    .await
+                    .unwrap_or_default();
                     if let Err(e) = deployment_servers
-                        .start_image(result.deployment_id, image_ref, &host)
+                        .start_image(
+                            result.deployment_id,
+                            image_ref,
+                            &host,
+                            &runtime_env,
+                        )
                         .await
                     {
                         tracing::error!(deployment_id = %result.deployment_id, error = %e, "failed to start deployment container");
