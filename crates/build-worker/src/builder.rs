@@ -28,12 +28,12 @@ pub async fn run_build(
 
     // --output image tells BuildKit to push directly to the registry (type=image,push=true).
     // No tarball is transferred back to the worker client.
-    let mut cmd = Command::new("railpack");
-    cmd.args(["build", "--name", &build_image_ref, "--output", "image", "."]);
+    let mut cmd = Command::new("nixpacks");
+    cmd.args(["build", "--name", &build_image_ref, "-o", "image", "."]);
     cmd.current_dir(work_dir);
     cmd.env("BUILDKIT_HOST", "unix:///var/run/buildkit/buildkitd.sock");
     run_logged_command(
-        "railpack build",
+        "nixpacks build",
         &mut cmd,
         job.deployment_id,
         nats,
@@ -171,7 +171,7 @@ where
 {
     tokio::time::timeout(build_timeout, wait)
         .await
-        .map_err(|_| anyhow::anyhow!("build timed out after {} seconds", build_timeout.as_secs()))?
+        .map_err(|_| anyhow::anyhow!("nixpacks build timed out after {} seconds", build_timeout.as_secs()))?
         .map_err(Into::into)
 }
 

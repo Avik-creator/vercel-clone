@@ -18,11 +18,13 @@ RUN cargo chef cook --release -p vercel-clone-worker --recipe-path recipe.json
 COPY . .
 RUN cargo build --release --locked -p vercel-clone-worker
 
-# --- railpack: install via official install script ---
-FROM debian:bookworm-slim AS railpack-builder
+# --- nixpacks: install from GitHub releases ---
+FROM debian:bookworm-slim AS nixpacks-builder
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
     rm -rf /var/lib/apt/lists/*
-RUN curl -sSL https://railpack.com/install.sh | sh -s -- --bin-dir /usr/local/bin
+RUN curl -sSL https://github.com/railwayapp/nixpacks/releases/download/v1.41.0/nixpacks-v1.41.0-aarch64-unknown-linux-musl.tar.gz -o /tmp/nixpacks.tar.gz && \
+    tar -xzf /tmp/nixpacks.tar.gz -C /usr/local/bin && \
+    rm /tmp/nixpacks.tar.gz
 
 # --- runtime ---
 FROM debian:bookworm-slim
@@ -41,7 +43,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY --from=builder /app/target/release/vercel-clone-worker .
-COPY --from=railpack-builder /usr/local/bin/railpack /usr/local/bin/railpack
+COPY --from=nixpacks-builder /usr/local/bin/nixpacks /usr/local/bin/nixpacks
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
     usermod -aG docker appuser && \
