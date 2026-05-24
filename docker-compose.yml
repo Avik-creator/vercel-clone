@@ -154,9 +154,11 @@ services:
     container_name: buildkit
     restart: unless-stopped
     privileged: true
+    entrypoint: ["/bin/sh", "/etc/buildkit/buildkit-entrypoint.sh"]
     command: ["--addr", "unix:///run/buildkit/buildkitd.sock", "--config", "/etc/buildkit/buildkitd.toml"]
     volumes:
       - ./infra/buildkitd.toml:/etc/buildkit/buildkitd.toml:ro
+      - ./infra/buildkit-entrypoint.sh:/etc/buildkit/buildkit-entrypoint.sh:ro
       - /var/run/buildkit:/var/run/buildkit
     healthcheck:
       test: ["CMD", "buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "debug", "workers"]
@@ -270,6 +272,7 @@ services:
       MAX_CONCURRENT_BUILDS: 2
       BUILDKIT_HOST: unix:///var/run/buildkit/buildkitd.sock
       NIXPACKS_NODE_VERSION: "22"
+      HOME: /home/appuser
     networks:
       - default
       - build-net

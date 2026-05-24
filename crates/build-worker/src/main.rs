@@ -4,9 +4,12 @@ mod models;
 mod nats;
 
 use futures::StreamExt;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
+use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::models::{BuildResult, DeploymentState, LogLine};
 
@@ -45,6 +48,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_builds));
+    let in_flight = Arc::new(Mutex::new(HashSet::<Uuid>::new()));
     tracing::info!(max_concurrent = config.max_concurrent_builds, "subscribing to build jobs");
 
     let jobs = nats.subscribe_jobs().await?;
@@ -67,9 +71,23 @@ async fn main() -> anyhow::Result<()> {
                     break;
                 };
 
+                let deployment_id = received.job.deployment_id;
+                {
+                    let mut active = in_flight.lock().await;
+                    if !active.insert(deployment_id) {
+                        tracing::warn!(
+                            %deployment_id,
+                            "duplicate build job while one is in flight, skipping"
+                        );
+                        received.ack().await;
+                        continue;
+                    }
+                }
+
                 let permit = match semaphore.clone().acquire_owned().await {
                     Ok(p) => p,
                     Err(_) => {
+                        in_flight.lock().await.remove(&deployment_id);
                         tracing::info!("semaphore closed, rejecting job");
                         received.nak().await;
                         continue;
@@ -78,6 +96,7 @@ async fn main() -> anyhow::Result<()> {
 
                 let nats = nats.clone();
                 let work_base = work_base.clone();
+                let in_flight = in_flight.clone();
                 let registry_url = config.registry_url.clone();
                 let build_registry_url = config.build_registry_url
                     .clone()
@@ -162,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
 
                     if let Err(e) = nats.publish_result(&result).await {
                         tracing::error!(%deployment_id, error = %e, "failed to publish build result");
+                        in_flight.lock().await.remove(&deployment_id);
                         received.nak().await;
                         return;
                     }
@@ -170,7 +190,7 @@ async fn main() -> anyhow::Result<()> {
 
                     let work_dir = work_base.join(deployment_id.to_string());
                     let _ = tokio::fs::remove_dir_all(&work_dir).await;
-
+                    in_flight.lock().await.remove(&deployment_id);
                 });
             }
         }
@@ -216,6 +236,9 @@ async fn process_job(
     build_timeout_secs: u64,
 ) -> anyhow::Result<String> {
     let work_dir = work_base.join(job.deployment_id.to_string());
+    if tokio::fs::try_exists(&work_dir).await.unwrap_or(false) {
+        tokio::fs::remove_dir_all(&work_dir).await?;
+    }
     tokio::fs::create_dir_all(&work_dir).await?;
 
     let image_ref = builder::run_build(

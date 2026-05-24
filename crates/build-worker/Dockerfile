@@ -46,7 +46,9 @@ COPY --from=builder /app/target/release/vercel-clone-worker .
 COPY --from=nixpacks-builder /usr/local/bin/nixpacks /usr/local/bin/nixpacks
 COPY infra/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
-    useradd -r -u 1001 -s /sbin/nologin appuser && \
+    mkdir -p /home/appuser && \
+    useradd -r -u 1001 -d /home/appuser -s /sbin/nologin appuser && \
+    chown appuser:appuser /home/appuser && \
     chown -R appuser:appuser /app
 
 ENTRYPOINT ["docker-entrypoint.sh"]

@@ -19,4 +19,7 @@ if [ -S /var/run/buildkit/buildkitd.sock ]; then
   chmod 666 /var/run/buildkit/buildkitd.sock 2>/dev/null || true
 fi
 
-exec gosu appuser "$@"
+mkdir -p /home/appuser
+chown appuser:appuser /home/appuser 2>/dev/null || true
+
+exec gosu appuser env HOME=/home/appuser "$@"

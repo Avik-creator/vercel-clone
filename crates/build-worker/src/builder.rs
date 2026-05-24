@@ -129,13 +129,19 @@ async fn clone_repo(job: &BuildJob, work_dir: &Path, nats: &WorkerNats) -> anyho
         })
         .await;
 
-    let status = Command::new("git")
+    let output = Command::new("git")
         .args(["clone", &git_url, "."])
         .current_dir(work_dir)
-        .status()
+        .output()
         .await?;
-    if !status.success() {
-        anyhow::bail!("git clone failed with exit code {}", status.code().unwrap_or(-1));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("exit code {}", output.status.code().unwrap_or(-1))
+        } else {
+            stderr
+        };
+        anyhow::bail!("git clone failed: {}", detail);
     }
 
     let status = Command::new("git")
