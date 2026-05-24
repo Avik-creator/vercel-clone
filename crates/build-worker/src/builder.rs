@@ -29,8 +29,14 @@ pub async fn run_build(
     let node_version =
         std::env::var("NIXPACKS_NODE_VERSION").unwrap_or_else(|_| "22".to_string());
     let mut nixpacks = Command::new("nixpacks");
-    nixpacks.args(["build", "-o", ".", "."]);
-    nixpacks.env("NIXPACKS_NODE_VERSION", &node_version);
+    nixpacks.args([
+        "build",
+        "-o",
+        ".",
+        "--env",
+        &format!("NIXPACKS_NODE_VERSION={node_version}"),
+        ".",
+    ]);
     nixpacks.current_dir(work_dir);
     run_logged_command(
         "nixpacks plan",
