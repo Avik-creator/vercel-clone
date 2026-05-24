@@ -2,6 +2,8 @@
 
 A self-hosted deployment platform built with Rust. Connect a GitHub repository, push code, and get a live preview URL — similar to Vercel but running entirely on your own infrastructure.
 
+**Full system documentation:** [DOCS.md](./DOCS.md) (architecture, registry, BuildKit, NATS, serve pipeline, troubleshooting).
+
 ## How It Works
 
 ```
