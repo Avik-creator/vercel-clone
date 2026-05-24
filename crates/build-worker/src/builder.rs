@@ -26,8 +26,6 @@ pub async fn run_build(
     // The image_ref stored in the DB uses the host-accessible hostname so Docker can pull it.
     let serve_image_ref = image_tag(registry_url, job.deployment_id);
 
-    // Nixpacks --docker-output type=image goes through docker.sock, which does not expose
-    // BuildKit's image exporter. Generate the Dockerfile, then build+push via buildctl.
     let mut nixpacks = Command::new("nixpacks");
     nixpacks.args(["build", "-o", ".", "."]);
     nixpacks.current_dir(work_dir);
