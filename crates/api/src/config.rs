@@ -28,6 +28,9 @@ pub struct AppConfig {
     #[serde(default = "default_base_domain")]
     pub base_domain: String,
 
+    /// Public API URL for OAuth callbacks (e.g. http://localhost:8080 or https://api.example.com).
+    pub api_public_url: Option<String>,
+
     #[serde(default = "default_nats_url")]
     pub nats_url: String,
 
@@ -76,6 +79,17 @@ impl AppConfig {
 
     pub fn is_production(&self) -> bool {
         self.env == "production"
+    }
+
+    pub fn github_oauth_callback_url(&self) -> String {
+        if let Some(url) = &self.api_public_url {
+            format!("{}/v1/auth/github/callback", url.trim_end_matches('/'))
+        } else {
+            format!(
+                "http://{}:{}/v1/auth/github/callback",
+                self.base_domain, self.port
+            )
+        }
     }
 }
 

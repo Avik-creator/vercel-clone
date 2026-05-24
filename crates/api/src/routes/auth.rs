@@ -44,10 +44,7 @@ pub async fn github_oauth_redirect(State(state): State<AppState>) -> Redirect {
         .append_pair("client_id", &state.config.github_client_id)
         .append_pair(
             "redirect_uri",
-            &format!(
-                "http://{}/v1/auth/github/callback",
-                state.config.base_domain
-            ),
+            &state.config.github_oauth_callback_url(),
         )
         .append_pair("scope", "read:user user:email repo");
     Redirect::to(url.as_str())

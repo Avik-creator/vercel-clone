@@ -18,6 +18,7 @@ services:
   api:
     environment:
       BASE_DOMAIN: localhost
+      API_PUBLIC_URL: http://localhost:8080
       SERVE_TLS: "false"
       # Bypass PgBouncer locally — scram-sha-256 (Postgres 17 default) is not
       # supported in PgBouncer transaction mode. Connect directly to Postgres.
