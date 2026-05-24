@@ -193,33 +193,60 @@ class ApiClient {
 
   streamDeploymentLogs(
     id: string,
-    onMessage: (log: string) => void,
+    onBatch: (lines: string[]) => void,
     onDone?: () => void,
     onError?: (error: Event) => void,
+    onReconnect?: () => void,
   ) {
     const token = this.getToken()
     const url = `${this.baseUrl}/v1/deployments/${id}/logs${token ? `?token=${token}` : ""}`
     const eventSource = new EventSource(url)
 
-    eventSource.onmessage = (event) => {
-      onMessage(event.data)
+    const pending: string[] = []
+    let flushTimer: ReturnType<typeof setTimeout> | null = null
+    let openedBefore = false
+
+    const flush = () => {
+      flushTimer = null
+      if (pending.length === 0) return
+      const batch = pending.splice(0, pending.length)
+      onBatch(batch)
     }
 
-    // Server sends `event: done` when the build reaches a terminal state.
+    const scheduleFlush = () => {
+      if (flushTimer !== null) return
+      flushTimer = setTimeout(flush, 32)
+    }
+
+    eventSource.onopen = () => {
+      if (openedBefore) {
+        onReconnect?.()
+      }
+      openedBefore = true
+    }
+
+    eventSource.onmessage = (event) => {
+      pending.push(event.data)
+      scheduleFlush()
+    }
+
     eventSource.addEventListener("done", () => {
+      flush()
       eventSource.close()
       onDone?.()
     })
 
     eventSource.onerror = () => {
-      // EventSource auto-reconnects on transient errors; only call onError if it
-      // stays closed (e.g. auth failure).
       if (eventSource.readyState === EventSource.CLOSED) {
+        flush()
         onError?.(new Event("error"))
       }
     }
 
-    return () => eventSource.close()
+    return () => {
+      if (flushTimer !== null) clearTimeout(flushTimer)
+      eventSource.close()
+    }
   }
 
   // API Keys

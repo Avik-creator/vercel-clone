@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useRef, use } from "react"
+import { useEffect, use } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { useAuth } from "@/lib/auth-context"
@@ -8,6 +8,7 @@ import { useDeployment, useProject } from "@/lib/hooks"
 import { api } from "@/lib/api"
 import { DashboardLayout } from "@/components/dashboard-layout"
 import { DeploymentStatusBadge } from "@/components/deployment-status-badge"
+import { BuildLogViewer } from "@/components/build-log-viewer"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -18,12 +19,10 @@ import {
   GitCommit, 
   Clock,
   Terminal,
-  Copy,
-  Check,
   RotateCw,
   XCircle
 } from "lucide-react"
-import { formatDate, formatRelativeTime, truncateCommitSha } from "@/lib/utils"
+import { formatRelativeTime, truncateCommitSha } from "@/lib/utils"
 import { mutate } from "swr"
 
 export default function DeploymentDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -32,54 +31,12 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
   const router = useRouter()
   const { data: deployment, isLoading: deploymentLoading } = useDeployment(id)
   const { data: project } = useProject(deployment?.project_id)
-  
-  const [logs, setLogs] = useState<string[]>([])
-  const [isStreaming, setIsStreaming] = useState(false)
-  const [copied, setCopied] = useState(false)
-  const logsEndRef = useRef<HTMLDivElement>(null)
-  const streamStartedRef = useRef(false)
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       router.push("/login")
     }
   }, [authLoading, isAuthenticated, router])
-
-  // Seed logs from DB for completed deployments (shown immediately on page load).
-  useEffect(() => {
-    if (deployment?.build_log && !streamStartedRef.current && logs.length === 0) {
-      setLogs(deployment.build_log.split("\n").filter(Boolean))
-    }
-  }, [deployment?.build_log]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Start SSE stream once when the deployment is first seen as active.
-  // Never restart on state transitions — the stream is kept alive until the server
-  // sends `event: done`, at which point we do a final refresh.
-  useEffect(() => {
-    if (!deployment) return
-    if (streamStartedRef.current) return
-    if (!["queued", "building", "uploading"].includes(deployment.state)) return
-
-    streamStartedRef.current = true
-    setIsStreaming(true)
-
-    const stop = api.streamDeploymentLogs(
-      id,
-      (line) => setLogs((prev) => [...prev, line]),
-      () => {
-        // Server closed the stream — build finished. Refresh deployment once.
-        setIsStreaming(false)
-        mutate(`deployment-${id}`)
-      },
-    )
-
-    return stop
-  }, [deployment?.id]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-scroll to the bottom as new lines arrive.
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [logs])
 
   if (authLoading || !isAuthenticated) {
     return (
@@ -107,12 +64,6 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
     } catch (error) {
       console.error("Failed to promote:", error)
     }
-  }
-
-  const copyLogs = () => {
-    navigator.clipboard.writeText(logs.join("\n"))
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
   }
 
   const canCancel = deployment && ["queued", "building"].includes(deployment.state)
@@ -259,51 +210,12 @@ export default function DeploymentDetailPage({ params }: { params: Promise<{ id:
               </Card>
             )}
 
-            {/* Build Logs */}
-            <Card id="logs">
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <Terminal className="h-5 w-5" />
-                  Build Logs
-                  {isStreaming && (
-                    <span className="ml-2 h-2 w-2 rounded-full bg-success animate-pulse" />
-                  )}
-                </CardTitle>
-                <Button variant="outline" size="sm" onClick={copyLogs} disabled={logs.length === 0}>
-                  {copied ? (
-                    <>
-                      <Check className="h-4 w-4 mr-1" />
-                      Copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4 mr-1" />
-                      Copy
-                    </>
-                  )}
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0">
-                <div className="bg-black rounded-b-lg max-h-[500px] overflow-auto">
-                  {logs.length > 0 ? (
-                    <div className="p-4 font-mono text-sm">
-                      {logs.map((log, i) => (
-                        <div key={i} className="log-line text-foreground/90">
-                          {log}
-                        </div>
-                      ))}
-                      <div ref={logsEndRef} />
-                    </div>
-                  ) : (
-                    <div className="p-8 text-center text-muted-foreground">
-                      {["queued"].includes(deployment.state)
-                        ? "Waiting for build to start..."
-                        : "No build logs available"}
-                    </div>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
+            <BuildLogViewer
+              deploymentId={id}
+              state={deployment.state}
+              initialBuildLog={deployment.build_log}
+              onStreamEnd={() => mutate(`deployment-${id}`)}
+            />
 
             {/* URL Info */}
             {deployment.url && (
