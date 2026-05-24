@@ -26,14 +26,40 @@ pub async fn run_build(
     // The image_ref stored in the DB uses the host-accessible hostname so Docker can pull it.
     let serve_image_ref = image_tag(registry_url, job.deployment_id);
 
-    // --output image tells BuildKit to push directly to the registry (type=image,push=true).
-    // No tarball is transferred back to the worker client.
-    let mut cmd = Command::new("nixpacks");
-    cmd.args(["build", "--name", &build_image_ref, "--docker-output", &format!("type=image,name={},push=true", build_image_ref), "."]);
-    cmd.current_dir(work_dir);
+    // Nixpacks --docker-output type=image goes through docker.sock, which does not expose
+    // BuildKit's image exporter. Generate the Dockerfile, then build+push via buildctl.
+    let mut nixpacks = Command::new("nixpacks");
+    nixpacks.args(["build", "-o", ".", "."]);
+    nixpacks.current_dir(work_dir);
     run_logged_command(
-        "nixpacks build",
-        &mut cmd,
+        "nixpacks plan",
+        &mut nixpacks,
+        job.deployment_id,
+        nats,
+        build_timeout,
+    )
+    .await?;
+
+    let docker_output = format!("type=image,name={},push=true", build_image_ref);
+    let mut buildctl = Command::new("buildctl");
+    buildctl.args([
+        "build",
+        "--frontend",
+        "dockerfile.v0",
+        "--local",
+        "context=.",
+        "--local",
+        "dockerfile=.nixpacks",
+        "--output",
+        &docker_output,
+    ]);
+    buildctl.current_dir(work_dir);
+    if let Ok(host) = std::env::var("BUILDKIT_HOST") {
+        buildctl.env("BUILDKIT_HOST", host);
+    }
+    run_logged_command(
+        "buildctl build",
+        &mut buildctl,
         job.deployment_id,
         nats,
         build_timeout,
@@ -170,7 +196,7 @@ where
 {
     tokio::time::timeout(build_timeout, wait)
         .await
-        .map_err(|_| anyhow::anyhow!("nixpacks build timed out after {} seconds", build_timeout.as_secs()))?
+        .map_err(|_| anyhow::anyhow!("build timed out after {} seconds", build_timeout.as_secs()))?
         .map_err(Into::into)
 }
 
