@@ -39,7 +39,7 @@ COPY --from=builder /app/crates/api/migrations ./migrations
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
     groupadd -g 101 docker && \
-    usermod -aG docker appuser && \
+    usermod -aG docker,daemon appuser && \
     chown -R appuser:appuser /app
 
 EXPOSE 8080

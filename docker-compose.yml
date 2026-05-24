@@ -203,6 +203,7 @@ services:
       MINIO_BUCKET: deployments
       DOCKER_NETWORK: vercel-clone_default
       SERVE_NETWORK: vercel-clone_serve-net
+    user: root
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
