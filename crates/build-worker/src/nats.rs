@@ -1,7 +1,23 @@
 use async_nats::jetstream::stream::Config as StreamConfig;
 use futures::StreamExt;
+use std::path::{Path, PathBuf};
 
-use crate::models::{BuildJob, BuildResult, LogLine};
+use crate::models::{BuildJob, BuildResult, FailedBuildJob, LogLine};
+
+pub struct ReceivedJob {
+    pub job: BuildJob,
+    message: async_nats::jetstream::Message,
+}
+
+impl ReceivedJob {
+    pub async fn ack(self) {
+        let _ = self.message.ack().await;
+    }
+
+    pub async fn nak(&self) {
+        let _ = self.message.ack_with(async_nats::jetstream::AckKind::Nak(None)).await;
+    }
+}
 
 #[derive(Clone)]
 pub struct WorkerNats {
@@ -9,11 +25,17 @@ pub struct WorkerNats {
 }
 
 impl WorkerNats {
-    pub async fn connect(url: &str, user: Option<&str>, password: Option<&str>) -> anyhow::Result<Self> {
+    pub async fn connect(
+        url: &str,
+        user: Option<&str>,
+        password: Option<&str>,
+        tls_ca: Option<&str>,
+    ) -> anyhow::Result<Self> {
         let mut opts = async_nats::ConnectOptions::new();
         if let (Some(u), Some(p)) = (user, password) {
             opts = opts.user_and_password(u.to_string(), p.to_string());
         }
+        opts = apply_tls(opts, tls_ca)?;
         let client = opts
             .connect(url)
             .await
@@ -34,7 +56,7 @@ impl WorkerNats {
         Ok(Self { client })
     }
 
-    pub async fn subscribe_jobs(&self) -> anyhow::Result<impl futures::Stream<Item = BuildJob>> {
+    pub async fn subscribe_jobs(&self) -> anyhow::Result<impl futures::Stream<Item = ReceivedJob>> {
         let context = async_nats::jetstream::new(self.client.clone());
 
         let stream = context.get_stream("build_jobs").await?;
@@ -46,6 +68,7 @@ impl WorkerNats {
                 deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::All,
                 ack_policy: async_nats::jetstream::consumer::AckPolicy::Explicit,
                 max_deliver: 3,
+                ack_wait: std::time::Duration::from_secs(600),
                 backoff: vec![
                     std::time::Duration::from_secs(5),
                     std::time::Duration::from_secs(30),
@@ -61,8 +84,7 @@ impl WorkerNats {
             while let Some(msg) = messages.next().await {
                 if let Ok(msg) = msg {
                     if let Ok(job) = serde_json::from_slice::<BuildJob>(&msg.payload) {
-                        msg.ack().await.ok();
-                        yield job;
+                        yield ReceivedJob { job, message: msg };
                     }
                 }
             }
@@ -84,6 +106,28 @@ impl WorkerNats {
         self.client.publish(subject, payload.into()).await?;
         Ok(())
     }
+
+    pub async fn publish_failed_job(&self, job: &BuildJob, error: &str) -> anyhow::Result<()> {
+        let payload = FailedBuildJob {
+            job: job.clone(),
+            error: error.to_string(),
+            failed_at: chrono::Utc::now(),
+        };
+        let subject = format!("dlq.build.jobs.{}", job.deployment_id);
+        self.client
+            .publish(subject, serde_json::to_vec(&payload)?.into())
+            .await?;
+        Ok(())
+    }
+}
+
+fn apply_tls(opts: async_nats::ConnectOptions, ca_file: Option<&str>) -> anyhow::Result<async_nats::ConnectOptions> {
+    let Some(ca_path) = ca_file.filter(|p| !p.is_empty() && Path::new(p).exists()) else {
+        return Ok(opts);
+    };
+    Ok(opts
+        .require_tls(true)
+        .add_root_certificates(PathBuf::from(ca_path)))
 }
 
 async fn ensure_stream(

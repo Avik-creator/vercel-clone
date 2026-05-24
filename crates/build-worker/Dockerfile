@@ -29,7 +29,7 @@ RUN curl -sSL https://github.com/railwayapp/nixpacks/releases/download/v1.41.0/n
 # --- runtime ---
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 docker.io git && \
+    ca-certificates libssl3 git && \
     rm -rf /var/lib/apt/lists/*
 
 # Install buildctl for BuildKit communication
@@ -46,8 +46,6 @@ COPY --from=builder /app/target/release/vercel-clone-worker .
 COPY --from=nixpacks-builder /usr/local/bin/nixpacks /usr/local/bin/nixpacks
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
-    usermod -aG docker appuser && \
-    usermod -aG root appuser && \
     chown -R appuser:appuser /app
 
 USER appuser

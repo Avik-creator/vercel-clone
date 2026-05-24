@@ -43,3 +43,10 @@ pub struct LogLine {
     pub line: String,
     pub timestamp: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FailedBuildJob {
+    pub job: BuildJob,
+    pub error: String,
+    pub failed_at: DateTime<Utc>,
+}

@@ -14,7 +14,7 @@ pub async fn run_build(
     work_dir: &Path,
     registry_url: &str,
     build_registry_url: &str,
-    _build_network: &str,
+    build_network: &str,
     build_timeout: Duration,
 ) -> anyhow::Result<String> {
     clone_repo(job, work_dir, nats).await?;
@@ -63,6 +63,8 @@ pub async fn run_build(
         "context=.",
         "--local",
         "dockerfile=.nixpacks",
+        "--opt",
+        &format!("network={build_network}"),
         "--output",
         &docker_output,
     ]);

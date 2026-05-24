@@ -4,6 +4,7 @@ use axum::{
     routing::{delete, get, post},
 };
 
+pub mod admin;
 pub mod api_keys;
 pub mod auth;
 pub mod deployments;
@@ -54,6 +55,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/internal/builds/callback",
             post(deployments::build_callback),
+        )
+        .route("/v1/admin/failed-jobs", get(admin::list_failed_jobs))
+        .route(
+            "/v1/admin/failed-jobs/{sequence}/replay",
+            post(admin::replay_failed_job),
         )
         .with_state(state)
 }

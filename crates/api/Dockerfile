@@ -22,7 +22,7 @@ RUN cargo build --release --locked -p vercel-clone-api
 # --- runtime: minimal image with docker CLI to spawn deployment containers ---
 FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libssl3 curl gnupg lsb-release && \
+    ca-certificates libssl3 curl gnupg lsb-release gosu && \
     install -m 0755 -d /etc/apt/keyrings && \
     curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc && \
     chmod a+r /etc/apt/keyrings/docker.asc && \
@@ -36,12 +36,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 COPY --from=builder /app/target/release/vercel-clone-api .
 COPY --from=builder /app/crates/api/migrations ./migrations
-
-RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
-    groupadd -g 101 docker && \
-    usermod -aG docker,daemon appuser && \
+COPY infra/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh && \
+    useradd -r -u 1001 -s /sbin/nologin appuser && \
     chown -R appuser:appuser /app
 
 EXPOSE 8080
-USER appuser
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["./vercel-clone-api"]

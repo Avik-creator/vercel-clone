@@ -37,6 +37,12 @@ pub struct AppConfig {
     pub nats_user: Option<String>,
     pub nats_password: Option<String>,
 
+    /// Path to CA cert for NATS TLS. When set and the file exists, clients require TLS.
+    pub nats_tls_ca: Option<String>,
+
+    /// Bearer token for /v1/admin/* routes. Defaults to build_worker_secret.
+    pub admin_secret: Option<String>,
+
     #[serde(default = "default_minio_endpoint")]
     pub minio_endpoint: String,
 
@@ -79,6 +85,12 @@ impl AppConfig {
 
     pub fn is_production(&self) -> bool {
         self.env == "production"
+    }
+
+    pub fn admin_secret(&self) -> &str {
+        self.admin_secret
+            .as_deref()
+            .unwrap_or(&self.build_worker_secret)
     }
 
     pub fn github_oauth_callback_url(&self) -> String {

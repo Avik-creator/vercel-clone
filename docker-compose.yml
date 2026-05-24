@@ -87,9 +87,17 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
-    command: ["-js", "-m", "8222", "--user", "${NATS_USER:-nats}", "--pass", "${NATS_PASSWORD}"]
+    command:
+      - "-c"
+      - "/etc/nats/nats.conf"
+      - "--user"
+      - "${NATS_USER:-nats}"
+      - "--pass"
+      - "${NATS_PASSWORD}"
     volumes:
       - nats_data:/var/lib/nats
+      - ./infra/nats/nats.conf:/etc/nats/nats.conf:ro
+      - ./infra/nats/certs:/certs:ro
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
       interval: 10s
@@ -188,6 +196,7 @@ services:
       - "8080:8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra/nats/certs:/certs:ro
     tmpfs:
       - /tmp/vercel-clone-deployments:uid=1001,gid=1001
     env_file:
@@ -197,13 +206,13 @@ services:
       NATS_URL: nats://nats:4222
       NATS_USER: ${NATS_USER:-nats}
       NATS_PASSWORD: ${NATS_PASSWORD}
+      NATS_TLS_CA: /certs/ca.pem
       MINIO_ENDPOINT: http://minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       MINIO_BUCKET: deployments
       DOCKER_NETWORK: vercel-clone_default
       SERVE_NETWORK: vercel-clone_serve-net
-    user: root
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
       interval: 10s
@@ -244,8 +253,8 @@ services:
       buildkit:
         condition: service_healthy
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
       - /var/run/buildkit:/var/run/buildkit
+      - ./infra/nats/certs:/certs:ro
     tmpfs:
       - /tmp/builds:uid=1001,gid=1001
     env_file:
@@ -254,13 +263,13 @@ services:
       NATS_URL: nats://nats:4222
       NATS_USER: ${NATS_USER:-nats}
       NATS_PASSWORD: ${NATS_PASSWORD}
+      NATS_TLS_CA: /certs/ca.pem
       REGISTRY_URL: localhost:5000
       BUILD_REGISTRY_URL: registry:5000
       BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2
       BUILDKIT_HOST: unix:///var/run/buildkit/buildkitd.sock
       NIXPACKS_NODE_VERSION: "22"
-    user: root
     networks:
       - default
       - build-net

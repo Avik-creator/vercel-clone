@@ -78,10 +78,23 @@ pub async fn stream_logs(
     AuthUser(_user): AuthUser,
     Path(id): Path<Uuid>,
 ) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let historical = sqlx::query_as::<_, StoredLogLine>(
+        "SELECT line, timestamp FROM build_log_lines WHERE deployment_id = $1 ORDER BY id ASC",
+    )
+    .bind(id)
+    .fetch_all(&*state.db)
+    .await
+    .unwrap_or_default();
+
     let sender = state.nats.get_log_sender(id).await;
     let mut receiver = sender.subscribe();
 
     let stream = async_stream::stream! {
+        for row in historical {
+            yield Ok(Event::default()
+                .data(format!("{}: {}", row.timestamp.format("%H:%M:%S"), row.line)));
+        }
+
         loop {
             match receiver.recv().await {
                 Ok(log_line) => {
@@ -93,7 +106,6 @@ pub async fn stream_logs(
                         .data(format!("[{} log lines dropped due to slow connection]", n)));
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    // Build finished — tell the client so it can refresh deployment state.
                     yield Ok(Event::default().event("done").data(""));
                     break;
                 }
@@ -106,6 +118,12 @@ pub async fn stream_logs(
             .interval(std::time::Duration::from_secs(15))
             .text("keep-alive"),
     )
+}
+
+#[derive(sqlx::FromRow)]
+struct StoredLogLine {
+    line: String,
+    timestamp: chrono::DateTime<chrono::Utc>,
 }
 
 pub async fn build_callback(

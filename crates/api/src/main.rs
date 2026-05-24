@@ -215,7 +215,6 @@ async fn subscribe_all_logs(nats: NatsClient, db: Database) -> anyhow::Result<()
             if let Err(e) = persist_log_line(&db, &log).await {
                 tracing::error!(deployment_id = %log.deployment_id, error = %e, "failed to persist build log line");
             }
-            nats.buffer_log_line(log.deployment_id, &log.line).await;
             let sender = nats.get_log_sender(log.deployment_id).await;
             let _ = sender.send(log);
         }
@@ -342,18 +341,18 @@ async fn subscribe_build_results(
         if is_terminal {
             tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-            let buffered_log = nats.take_log_buffer(result.deployment_id).await;
-            if !buffered_log.is_empty() {
-                if let Err(e) = sqlx::query(
-                    "UPDATE deployments SET build_log = $1 WHERE id = $2",
-                )
-                .bind(&buffered_log)
-                .bind(result.deployment_id)
-                .execute(&*db)
-                .await
-                {
-                    tracing::error!(error = %e, "failed to persist build log");
-                }
+            if let Err(e) = sqlx::query(
+                "UPDATE deployments SET build_log = (
+                    SELECT string_agg(line, E'\\n' ORDER BY id)
+                    FROM build_log_lines
+                    WHERE deployment_id = $1
+                ) WHERE id = $1",
+            )
+            .bind(result.deployment_id)
+            .execute(&*db)
+            .await
+            {
+                tracing::error!(error = %e, "failed to persist build log");
             }
 
             nats.close_log_sender(result.deployment_id).await;

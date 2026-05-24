@@ -29,6 +29,7 @@ async fn main() -> anyhow::Result<()> {
         &config.nats_url,
         config.nats_user.as_deref(),
         config.nats_password.as_deref(),
+        config.nats_tls_ca.as_deref(),
     ).await?;
     tracing::info!(url = %config.nats_url, "nats connected");
 
@@ -61,7 +62,7 @@ async fn main() -> anyhow::Result<()> {
                 break;
             }
             job = jobs.next() => {
-                let Some(job) = job else {
+                let Some(received) = job else {
                     tracing::info!("job stream ended");
                     break;
                 };
@@ -70,6 +71,7 @@ async fn main() -> anyhow::Result<()> {
                     Ok(p) => p,
                     Err(_) => {
                         tracing::info!("semaphore closed, rejecting job");
+                        received.nak().await;
                         continue;
                     }
                 };
@@ -82,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap_or_else(|| config.registry_url.clone());
                 let build_network = config.build_network.clone();
                 let build_timeout_secs = config.build_timeout_secs;
+                let job = received.job.clone();
 
                 tokio::spawn(async move {
                     let _permit = permit;
@@ -143,6 +146,9 @@ async fn main() -> anyhow::Result<()> {
                                     timestamp: chrono::Utc::now(),
                                 })
                                 .await;
+                            if let Err(dlq_err) = nats.publish_failed_job(&job, &e.to_string()).await {
+                                tracing::error!(%deployment_id, error = %dlq_err, "failed to publish job to DLQ");
+                            }
                             BuildResult {
                                 deployment_id,
                                 state: DeploymentState::Error,
@@ -156,7 +162,11 @@ async fn main() -> anyhow::Result<()> {
 
                     if let Err(e) = nats.publish_result(&result).await {
                         tracing::error!(%deployment_id, error = %e, "failed to publish build result");
+                        received.nak().await;
+                        return;
                     }
+
+                    received.ack().await;
 
                     let work_dir = work_base.join(deployment_id.to_string());
                     let _ = tokio::fs::remove_dir_all(&work_dir).await;

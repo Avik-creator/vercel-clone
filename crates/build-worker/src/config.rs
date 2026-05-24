@@ -8,6 +8,9 @@ pub struct WorkerConfig {
     pub nats_user: Option<String>,
     pub nats_password: Option<String>,
 
+    /// Path to CA cert for NATS TLS. When set and the file exists, clients require TLS.
+    pub nats_tls_ca: Option<String>,
+
     /// Registry URL as seen by Docker daemon (host port-forwarded, used in image_ref stored in DB).
     #[serde(default = "default_registry_url")]
     pub registry_url: String,
