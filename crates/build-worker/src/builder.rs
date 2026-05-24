@@ -26,8 +26,11 @@ pub async fn run_build(
     // The image_ref stored in the DB uses the host-accessible hostname so Docker can pull it.
     let serve_image_ref = image_tag(registry_url, job.deployment_id);
 
+    let node_version =
+        std::env::var("NIXPACKS_NODE_VERSION").unwrap_or_else(|_| "22".to_string());
     let mut nixpacks = Command::new("nixpacks");
     nixpacks.args(["build", "-o", ".", "."]);
+    nixpacks.env("NIXPACKS_NODE_VERSION", &node_version);
     nixpacks.current_dir(work_dir);
     run_logged_command(
         "nixpacks plan",

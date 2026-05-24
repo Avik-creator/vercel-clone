@@ -259,6 +259,7 @@ services:
       BUILD_NETWORK: vercel-clone_build-net
       MAX_CONCURRENT_BUILDS: 2
       BUILDKIT_HOST: unix:///var/run/buildkit/buildkitd.sock
+      NIXPACKS_NODE_VERSION: "22"
     user: root
     networks:
       - default
