@@ -38,6 +38,8 @@ COPY --from=builder /app/target/release/vercel-clone-api .
 COPY --from=builder /app/crates/api/migrations ./migrations
 
 RUN useradd -r -u 1001 -s /sbin/nologin appuser && \
+    groupadd -g 101 docker && \
+    usermod -aG docker appuser && \
     chown -R appuser:appuser /app
 
 EXPOSE 8080
