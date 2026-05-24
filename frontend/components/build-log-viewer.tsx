@@ -27,7 +27,7 @@ export function BuildLogViewer({
   const pinnedRef = useRef(true)
   const streamStartedRef = useRef(false)
 
-  const [isStreaming, setIsStreaming] = useState(false)
+  const [isStreaming, setIsStreaming] = useState(ACTIVE_STATES.has(state))
   const [hasLogs, setHasLogs] = useState(Boolean(initialBuildLog?.trim()))
   const [copied, setCopied] = useState(false)
 
@@ -36,6 +36,18 @@ export function BuildLogViewer({
     if (!el || !pinnedRef.current) return
     el.scrollTop = el.scrollHeight
   }, [])
+
+  const setLogContent = useCallback(
+    (text: string) => {
+      fullLogRef.current = text
+      if (preRef.current) {
+        preRef.current.textContent = text
+      }
+      setHasLogs(text.length > 0)
+      scrollIfPinned()
+    },
+    [scrollIfPinned],
+  )
 
   const appendLines = useCallback(
     (lines: string[]) => {
@@ -70,28 +82,26 @@ export function BuildLogViewer({
     pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48
   }, [])
 
+  // Instant display for finished deployments while SSE connects.
   useEffect(() => {
-    if (streamStartedRef.current || !initialBuildLog?.trim()) return
-    if (fullLogRef.current.length > 0) return
+    if (ACTIVE_STATES.has(state)) return
+    if (!initialBuildLog?.trim() || fullLogRef.current.length > 0) return
+    setLogContent(initialBuildLog)
+  }, [state, initialBuildLog, setLogContent])
 
-    fullLogRef.current = initialBuildLog
-    if (preRef.current) {
-      preRef.current.textContent = initialBuildLog
-    }
-    setHasLogs(true)
-    scrollIfPinned()
-  }, [initialBuildLog, scrollIfPinned])
-
+  // Replay from DB via SSE for all states (live tail for active builds).
   useEffect(() => {
     if (streamStartedRef.current) return
-    if (!ACTIVE_STATES.has(state)) return
-
     streamStartedRef.current = true
-    setIsStreaming(true)
 
     const stop = api.streamDeploymentLogs(
       deploymentId,
-      appendLines,
+      (lines) => {
+        if (!ACTIVE_STATES.has(state) && fullLogRef.current.length > 0) {
+          return
+        }
+        appendLines(lines)
+      },
       () => {
         setIsStreaming(false)
         onStreamEnd?.()
@@ -106,6 +116,10 @@ export function BuildLogViewer({
 
     return stop
   }, [deploymentId, state, appendLines, clearLogs, onStreamEnd])
+
+  useEffect(() => {
+    setIsStreaming(ACTIVE_STATES.has(state))
+  }, [state])
 
   const copyLogs = () => {
     navigator.clipboard.writeText(fullLogRef.current)

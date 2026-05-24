@@ -1,12 +1,22 @@
 #!/bin/sh
 set -e
 
-if [ -S /var/run/docker.sock ]; then
-  DOCKER_GID=$(stat -c '%g' /var/run/docker.sock 2>/dev/null || stat -f '%g' /var/run/docker.sock)
-  if ! getent group dockerhost >/dev/null 2>&1; then
-    groupadd -g "$DOCKER_GID" dockerhost 2>/dev/null || groupadd dockerhost
+add_user_to_socket_group() {
+  sock="$1"
+  group_name="$2"
+  if [ -S "$sock" ]; then
+    gid=$(stat -c '%g' "$sock" 2>/dev/null || stat -f '%g' "$sock")
+    if ! getent group "$group_name" >/dev/null 2>&1; then
+      groupadd -g "$gid" "$group_name" 2>/dev/null || groupadd "$group_name"
+    fi
+    usermod -aG "$group_name" appuser 2>/dev/null || true
   fi
-  usermod -aG dockerhost appuser 2>/dev/null || true
+}
+
+add_user_to_socket_group /var/run/docker.sock dockerhost
+
+if [ -S /var/run/buildkit/buildkitd.sock ]; then
+  chmod 666 /var/run/buildkit/buildkitd.sock 2>/dev/null || true
 fi
 
 exec gosu appuser "$@"
